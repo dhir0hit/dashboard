@@ -1,8 +1,13 @@
 import {
   Bookmark,
   BookmarkPatch,
+  CalendarEvent,
+  CalendarEventCreate,
+  CalendarEventUpdate,
+  CalendarListResponse,
   CronListResponse,
   DashboardConfig,
+  GoogleAuthStatus,
   HealthResponse,
   SearchResponse,
   ServiceEntry,
@@ -239,6 +244,69 @@ export const api = {
       method: "POST",
       headers: { Accept: "application/json" },
     });
+    return jsonOrThrow(res);
+  },
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Calendar events (local CRUD + Google sync + Hermes cron).
+  // ─────────────────────────────────────────────────────────────────────
+  async listCalendarEvents(dateFrom?: string, dateTo?: string): Promise<CalendarListResponse> {
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("date_from", dateFrom);
+    if (dateTo) params.set("date_to", dateTo);
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE}/api/calendar/events${qs ? "?" + qs : ""}`);
+    return jsonOrThrow(res);
+  },
+
+  async createCalendarEvent(event: CalendarEventCreate): Promise<CalendarEvent> {
+    const res = await fetch(`${API_BASE}/api/calendar/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(event),
+    });
+    return jsonOrThrow(res);
+  },
+
+  async updateCalendarEvent(id: string, patch: CalendarEventUpdate): Promise<CalendarEvent> {
+    const res = await fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    return jsonOrThrow(res);
+  },
+
+  async deleteCalendarEvent(id: string): Promise<void> {
+    const res = await fetch(`${API_BASE}/api/calendar/events/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+    await jsonOrThrow<void>(res);
+  },
+
+  async getGoogleAuthStatus(): Promise<GoogleAuthStatus> {
+    const res = await fetch(`${API_BASE}/api/calendar/google/status`);
+    return jsonOrThrow(res);
+  },
+
+  async getGoogleLoginUrl(): Promise<string> {
+    const res = await fetch(`${API_BASE}/api/calendar/google/login`);
+    const data = await jsonOrThrow<{ auth_url: string }>(res);
+    return data.auth_url;
+  },
+
+  async syncGoogleCalendar(): Promise<{ synced: number; total: number }> {
+    const res = await fetch(`${API_BASE}/api/calendar/google/sync`, { method: "POST" });
+    return jsonOrThrow(res);
+  },
+
+  async disconnectGoogle(): Promise<void> {
+    const res = await fetch(`${API_BASE}/api/calendar/google/disconnect`, { method: "DELETE" });
+    await jsonOrThrow<void>(res);
+  },
+
+  async listHermesCalendarEvents(): Promise<CalendarListResponse> {
+    const res = await fetch(`${API_BASE}/api/calendar/hermes`);
     return jsonOrThrow(res);
   },
 };

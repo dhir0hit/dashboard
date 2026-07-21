@@ -12,6 +12,7 @@ import logging
 import re
 import secrets
 import subprocess
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote_plus, urlparse
 
@@ -22,6 +23,18 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import get_settings
 from .config_store import init_db, latest, save
+from .calendar_store import (
+    init_calendar_db,
+    create_event as db_create_event,
+    list_events as db_list_events,
+    update_event as db_update_event,
+    delete_event as db_delete_event,
+    upsert_google_event,
+    save_google_token,
+    get_google_token,
+    clear_google_token,
+    is_google_token_valid,
+)
 from .docker_discover import discover_docker_services
 from .mock_data import MOCK_HEALTH, MOCK_SERVICES
 from .proxmox import ProxmoxAuthError, ProxmoxClient, ProxmoxError
@@ -29,11 +42,16 @@ from .schemas import (
     BackgroundSettings,
     Bookmark,
     BookmarkPatch,
+    CalendarEvent,
+    CalendarEventCreate,
+    CalendarEventUpdate,
+    CalendarListResponse,
     ConfigSaveResponse,
     CronEntry,
     CronListResponse,
     DashboardConfig,
     ErrorResponse,
+    GoogleAuthStatus,
     HealthResponse,
     ReorderRequest,
     SearchResponse,
@@ -761,6 +779,292 @@ def root() -> dict:
             "/api/config/themes",
             "/api/search",
             "/api/cron",
+            "/api/calendar/events",
+            "/api/calendar/google/status",
+            "/api/calendar/google/login",
+            "/api/calendar/google/callback",
+            "/api/calendar/google/sync",
+            "/api/calendar/hermes",
             "/health",
         ],
     }
+
+
+# ============================================================ calendar events
+# Local day-planning events (CRUD) + Google Calendar sync (OAuth proxy) +
+# Hermes cron job mapping. All three sources are unified into CalendarEvent.
+
+def _cal_db_path() -> str:
+    s = get_settings()
+    # Calendar DB lives next to the config DB (same volume mount).
+    base = s.config_db.rsplit("/", 1)[0] if "/" in s.config_db else "."
+    return f"{base}/calendar.db"
+
+
+def _ensure_cal_db() -> None:
+    init_calendar_db(_cal_db_path())
+
+
+@app.get("/api/calendar/events", response_model=CalendarListResponse, tags=["calendar"])
+def list_calendar_events(
+    date_from: Optional[str] = Query(None, description="ISO date YYYY-MM-DD"),
+    date_to: Optional[str] = Query(None, description="ISO date YYYY-MM-DD"),
+    source: Optional[str] = Query(None, description="local | google | hermes"),
+) -> CalendarListResponse:
+    """List calendar events, optionally filtered by date range and source."""
+    _ensure_cal_db()
+    events = db_list_events(_cal_db_path(), date_from, date_to, source)
+    return CalendarListResponse(events=events, count=len(events))
+
+
+@app.post("/api/calendar/events", response_model=CalendarEvent, tags=["calendar"], status_code=201)
+def create_calendar_event(body: CalendarEventCreate) -> CalendarEvent:
+    """Create a local day-planning event."""
+    _ensure_cal_db()
+    event = CalendarEvent(
+        title=body.title,
+        description=body.description,
+        date=body.date,
+        time=body.time,
+        duration_minutes=body.duration_minutes,
+        source="local",
+        done=body.done,
+    )
+    return db_create_event(_cal_db_path(), event)
+
+
+@app.patch("/api/calendar/events/{event_id}", response_model=CalendarEvent, tags=["calendar"])
+def update_calendar_event(event_id: str, body: CalendarEventUpdate) -> CalendarEvent:
+    """Update an event (e.g. mark done, reschedule)."""
+    _ensure_cal_db()
+    patch = body.model_dump(exclude_none=True)
+    updated = db_update_event(_cal_db_path(), event_id, patch)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return updated
+
+
+@app.delete("/api/calendar/events/{event_id}", tags=["calendar"], status_code=204)
+def delete_calendar_event(event_id: str) -> None:
+    _ensure_cal_db()
+    if not db_delete_event(_cal_db_path(), event_id):
+        raise HTTPException(status_code=404, detail="Event not found")
+
+
+# ----------------------------------------------------- google calendar oauth
+
+@app.get("/api/calendar/google/status", response_model=GoogleAuthStatus, tags=["calendar"])
+def google_auth_status() -> GoogleAuthStatus:
+    """Check if Google Calendar is configured and authenticated."""
+    s = get_settings()
+    configured = bool(s.google_client_id and s.google_client_secret)
+    if not configured:
+        return GoogleAuthStatus(configured=False, authenticated=False)
+    authenticated = is_google_token_valid(_cal_db_path())
+    tok = get_google_token(_cal_db_path()) if authenticated else None
+    return GoogleAuthStatus(
+        configured=True,
+        authenticated=authenticated,
+        email=tok.get("email") if tok else None,
+    )
+
+
+@app.get("/api/calendar/google/login", tags=["calendar"])
+def google_login() -> dict:
+    """Redirect to Google's OAuth consent screen."""
+    s = get_settings()
+    if not s.google_client_id:
+        raise HTTPException(status_code=400, detail="GOOGLE_CLIENT_ID not configured")
+    from urllib.parse import urlencode
+    params = {
+        "client_id": s.google_client_id,
+        "redirect_uri": s.google_redirect_uri,
+        "response_type": "code",
+        "scope": "https://www.googleapis.com/auth/calendar.readonly email",
+        "access_type": "offline",
+        "prompt": "consent",
+    }
+    url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+    # Return JSON instead of redirect so the frontend can open in a new tab
+    return {"auth_url": url}
+
+
+@app.get("/api/calendar/google/callback", tags=["calendar"])
+def google_callback(code: str = Query(...), error: Optional[str] = Query(None)):
+    """OAuth callback — exchanges the code for tokens, stores them, redirects to /calendar."""
+    if error:
+        raise HTTPException(status_code=400, detail=f"OAuth error: {error}")
+    s = get_settings()
+    if not s.google_client_id or not s.google_client_secret:
+        raise HTTPException(status_code=400, detail="Google OAuth not configured")
+    _ensure_cal_db()
+    # Exchange code for tokens
+    resp = httpx.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "code": code,
+            "client_id": s.google_client_id,
+            "client_secret": s.google_client_secret,
+            "redirect_uri": s.google_redirect_uri,
+            "grant_type": "authorization_code",
+        },
+        timeout=10.0,
+    )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=400, detail=f"Token exchange failed: {resp.text}")
+    tokens = resp.json()
+    # Get user email
+    email = None
+    if tokens.get("access_token"):
+        ui = httpx.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {tokens['access_token']}"},
+            timeout=5.0,
+        )
+        if ui.status_code == 200:
+            email = ui.json().get("email")
+    # Calculate expiry
+    from datetime import timedelta
+    expires_in = tokens.get("expires_in", 3600)
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
+    save_google_token(
+        _cal_db_path(),
+        access_token=tokens["access_token"],
+        refresh_token=tokens.get("refresh_token"),
+        expires_at=expires_at,
+        email=email,
+        scope=tokens.get("scope"),
+    )
+    # Redirect back to the calendar page
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/calendar", status_code=302)
+
+
+@app.post("/api/calendar/google/sync", tags=["calendar"])
+def google_calendar_sync() -> dict:
+    """Pull events from Google Calendar and upsert them as source='google'."""
+    _ensure_cal_db()
+    tok = get_google_token(_cal_db_path())
+    if not tok or not tok.get("access_token"):
+        raise HTTPException(status_code=401, detail="Not authenticated with Google")
+    # Refresh token if expired
+    access_token = tok["access_token"]
+    if not is_google_token_valid(_cal_db_path()):
+        access_token = _refresh_google_token(tok)
+    # Fetch primary calendar events for the next 90 days
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    time_min = now.isoformat()
+    time_max = (now + timedelta(days=90)).isoformat()
+    resp = httpx.get(
+        "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+        headers={"Authorization": f"Bearer {access_token}"},
+        params={
+            "timeMin": time_min,
+            "timeMax": time_max,
+            "singleEvents": "true",
+            "orderBy": "startTime",
+            "maxResults": "250",
+        },
+        timeout=15.0,
+    )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Google API error: {resp.text}")
+    data = resp.json()
+    items = data.get("items", [])
+    synced = 0
+    for item in items:
+        start = item.get("start", {})
+        end = item.get("end", {})
+        dt_str = start.get("dateTime") or start.get("date")
+        if not dt_str:
+            continue
+        # Parse date + time
+        is_all_day = "date" in start and "dateTime" not in start
+        dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+        date = dt.strftime("%Y-%m-%d")
+        time_val = None if is_all_day else dt.strftime("%H:%M")
+        duration = None
+        if not is_all_day and end:
+            end_str = end.get("dateTime") or end.get("date")
+            if end_str:
+                end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                duration = int((end_dt - dt).total_seconds() / 60)
+        event = CalendarEvent(
+            title=item.get("summary", "(no title)"),
+            description=item.get("description"),
+            date=date,
+            time=time_val,
+            duration_minutes=duration,
+            source="google",
+            google_event_id=item.get("id"),
+        )
+        upsert_google_event(_cal_db_path(), event)
+        synced += 1
+    return {"synced": synced, "total": len(items)}
+
+
+@app.delete("/api/calendar/google/disconnect", tags=["calendar"])
+def google_disconnect() -> dict:
+    """Revoke Google access — clears stored tokens."""
+    _ensure_cal_db()
+    clear_google_token(_cal_db_path())
+    return {"ok": True}
+
+
+def _refresh_google_token(tok: dict) -> str:
+    """Refresh an expired Google access token using the stored refresh token."""
+    s = get_settings()
+    if not tok.get("refresh_token"):
+        raise HTTPException(status_code=401, detail="Google token expired and no refresh token")
+    resp = httpx.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "client_id": s.google_client_id,
+            "client_secret": s.google_client_secret,
+            "refresh_token": tok["refresh_token"],
+            "grant_type": "refresh_token",
+        },
+        timeout=10.0,
+    )
+    if resp.status_code != 200:
+        raise HTTPException(status_code=401, detail="Failed to refresh Google token")
+    data = resp.json()
+    from datetime import timedelta
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=data["expires_in"])).isoformat()
+    save_google_token(
+        _cal_db_path(),
+        access_token=data["access_token"],
+        refresh_token=tok["refresh_token"],
+        expires_at=expires_at,
+        email=tok.get("email"),
+    )
+    return data["access_token"]
+
+
+# ----------------------------------------------------- hermes cron → calendar
+# Maps Hermes cron jobs (from /api/cron) into CalendarEvent objects so the
+# calendar can display them alongside local and Google events.
+
+@app.get("/api/calendar/hermes", response_model=CalendarListResponse, tags=["calendar"])
+def hermes_calendar_events() -> CalendarListResponse:
+    """Return Hermes cron jobs as calendar events (next_run date)."""
+    cron = list_cron()
+    events: list[CalendarEvent] = []
+    for j in cron.jobs:
+        if not j.next_run:
+            continue
+        try:
+            dt = datetime.fromisoformat(j.next_run.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            continue
+        events.append(CalendarEvent(
+            id=f"hermes-{j.id}",
+            title=f"⏰ {j.name or j.id}",
+            description=j.description or j.schedule,
+            date=dt.strftime("%Y-%m-%d"),
+            time=dt.strftime("%H:%M"),
+            source="hermes",
+            done=False,
+        ))
+    return CalendarListResponse(events=events, count=len(events))

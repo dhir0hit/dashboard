@@ -146,6 +146,51 @@ export interface CronEntry {
   description?: string | null;
 }
 
+// --- Calendar events (local + Google + Hermes cron, unified) ---
+
+export type CalendarEventSource = "local" | "google" | "hermes";
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  description?: string | null;
+  date: string;            // "YYYY-MM-DD"
+  time?: string | null;    // "HH:MM" or null for all-day
+  duration_minutes?: number | null;
+  source: CalendarEventSource;
+  done: boolean;
+  google_event_id?: string | null;
+}
+
+export interface CalendarEventCreate {
+  title: string;
+  description?: string;
+  date: string;
+  time?: string;
+  duration_minutes?: number;
+  done?: boolean;
+}
+
+export interface CalendarEventUpdate {
+  title?: string;
+  description?: string;
+  date?: string;
+  time?: string;
+  duration_minutes?: number;
+  done?: boolean;
+}
+
+export interface CalendarListResponse {
+  events: CalendarEvent[];
+  count: number;
+}
+
+export interface GoogleAuthStatus {
+  configured: boolean;
+  authenticated: boolean;
+  email?: string | null;
+}
+
 export interface CronListResponse {
   jobs: CronEntry[];
   source: string;

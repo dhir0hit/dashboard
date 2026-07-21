@@ -207,7 +207,55 @@ class CronEntry(BaseModel):
 class CronListResponse(BaseModel):
     jobs: list[CronEntry]
     source: str  # "hermes-cli" | "stub"
+
+
+# --------------------------------------------------------------- calendar events
+# Local day-planning events + Google Calendar sync. Events from all three
+# sources (local, google, hermes-cron) are unified into CalendarEvent so the
+# frontend renders one grid regardless of origin.
+
+class CalendarEvent(BaseModel):
+    id: str = ""  # auto-generated on POST
+    title: str
+    description: Optional[str] = None
+    date: str  # ISO date "YYYY-MM-DD"
+    time: Optional[str] = None  # "HH:MM" or None for all-day
+    duration_minutes: Optional[int] = None
+    source: str = "local"  # "local" | "google" | "hermes"
+    done: bool = False  # day-planning: mark as completed
+    google_event_id: Optional[str] = None  # upstream ID when source=="google"
+
+
+class CalendarEventCreate(BaseModel):
+    """POST body — id and source are server-assigned."""
+    title: str
+    description: Optional[str] = None
+    date: str
+    time: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    done: bool = False
+
+
+class CalendarEventUpdate(BaseModel):
+    """PATCH body — all fields optional."""
+    title: Optional[str] = None
+    description: Optional[str] = None
+    date: Optional[str] = None
+    time: Optional[str] = None
+    duration_minutes: Optional[int] = None
+    done: Optional[bool] = None
+
+
+class CalendarListResponse(BaseModel):
+    events: list[CalendarEvent]
     count: int = 0
+
+
+class GoogleAuthStatus(BaseModel):
+    configured: bool  # are client_id + secret set in env?
+    authenticated: bool  # do we have a valid (non-expired) token?
+    email: Optional[str] = None
+    auth_url: Optional[str] = None  # URL the frontend should redirect to
 
 
 # --------------------------------------------------------------- search proxy

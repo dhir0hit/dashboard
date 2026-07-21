@@ -37,7 +37,15 @@ class Settings(BaseSettings):
 
     # Server
     host: str = Field("127.0.0.1")
-    port: int = Field(8000)
+    port: int = 8000
+
+    # Google Calendar OAuth (all optional — feature is dormant without these)
+    google_client_id: str = Field("", alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str = Field("", alias="GOOGLE_CLIENT_SECRET")
+    google_redirect_uri: str = Field(
+        "http://localhost:8888/api/calendar/google/callback",
+        alias="GOOGLE_REDIRECT_URI",
+    )
 
     # --- Derived helpers ------------------------------------------------
     @property
