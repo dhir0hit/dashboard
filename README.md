@@ -1,11 +1,29 @@
-# Proxmox Dashboard
+# Server Dashboard
 
-A full-stack dashboard for services running in LXC/QEMU guests on a Proxmox
-host. The backend (FastAPI) discovers containers/VMs via the Proxmox API and
-inspects each guest for running Docker services. The frontend (React + Vite +
-Tailwind) renders the discovered services as animated tiles with health
-polling, a settings page for managing dashboard layout, and per-service
-background effects.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+A full-stack dashboard for services on a NAS. The backend (FastAPI) discovers
+containers/VMs via the Proxmox API and inspects each guest for running Docker
+services. The frontend (React + Vite + Tailwind) renders the discovered services
+as animated tiles with health polling, a settings page for managing dashboard
+layout, and per-service background effects.
+
+## Screenshots
+
+### Dashboard — Tile Grid
+![Dashboard Home](screenshots/dashboard-home.png)
+
+### Settings — Tile Management, Background & Theme
+![Settings](screenshots/settings.png)
+
+### Search — Private Web Search
+![Search](screenshots/search.png)
+
+### Bookmarks
+![Bookmarks](screenshots/bookmarks.png)
+
+### Calendar
+![Calendar](screenshots/calendar.png)
 
 ## Architecture
 
