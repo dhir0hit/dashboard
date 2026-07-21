@@ -84,7 +84,11 @@ search/filter controls, and the Settings page. Edit `PROXMOX_API_TOKEN`,
    2. SSH into each guest (`SSH_HOST`, `SSH_USER`, `SSH_KEY_FILE`).
    3. `pct exec` from the PVE host (needs token permissions on the host, no
       per-guest configuration).
-4. Bring the stack up:
+4. Google Calendar setup (one-time):
+   - Create a **Desktop app** OAuth client in [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+     - Enable the **Google Calendar API**
+   - Add `VITE_GOOGLE_CLIENT_ID=<your-desktop-client-id>.apps.googleusercontent.com` to your `frontend/.env`
+5. Bring the stack up:
    ```bash
    docker compose --env-file .env up --build
    ```

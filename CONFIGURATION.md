@@ -203,13 +203,13 @@ Calendar page (📅 icon, route `/calendar`).
 
 - Renders a month grid. Days that have a Hermes cron job's
   `last_run` or `next_run` on them are pinned with an indicator.
-- Data source: the backend shells out to `hermes cronjob list --json` on
-  the backend container's host. If `hermes` is not on PATH or the call
-  fails, the page falls back to an empty stub (you'll see
-  `source: "stub"` in the API response).
-- **To enable real jobs**: install the `hermes` CLI on the Docker host AND
-  make it reachable inside the `dashboard-backend` container. The easiest
-  way is a bind-mount in a `docker-compose.override.yml`:
+## 4.6 Calendar / cron
+
+Calendar page (📅 icon, route `/calendar`).
+
+- Renders a month grid. Days that have a Hermes cron job's `last_run` or `next_run` on them are pinned with an indicator.
+- Data source: the backend shells out to `hermes cronjob list --json` on the backend container's host. If `hermes` is not on PATH or the call fails, the page falls back to an empty stub (you'll see `source: "stub"` in the API response).
+- **To enable real jobs**: install the `hermes` CLI on the Docker host AND make it reachable inside the `dashboard-backend` container. The easiest way is a bind-mount in a `docker-compose.override.yml`:
 
   ```yaml
   services:
@@ -219,9 +219,13 @@ Calendar page (📅 icon, route `/calendar`).
         - /root/.hermes:/root/.hermes:ro
   ```
 
-  Then `docker compose up -d` and the calendar will reflect your real
-  Hermes cron jobs.
+  Then `docker compose up -d` and the calendar will reflect your real Hermes cron jobs.
 
+- **Google Calendar integration** (one-time setup):
+  - Create a **Desktop app** OAuth client in [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+    - Enable the **Google Calendar API**
+  - Add `VITE_GOOGLE_CLIENT_ID=<your-desktop-client-id>.apps.googleusercontent.com` to your `frontend/.env`
+- **No manual "add an event" UI** — the calendar is a view onto Hermes cron, not a standalone calendar app. Create jobs via the Hermes CLI (`hermes cronjob ...`) and refresh the page.
 - **No manual "add an event" UI** — the calendar is a view onto Hermes
   cron, not a standalone calendar app. Create jobs via the Hermes CLI
   (`hermes cronjob ...`) and refresh the page.
