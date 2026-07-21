@@ -1,7 +1,7 @@
 // Calendar page — unified view of local day-planning events, Google Calendar
 // sync, and Hermes cron jobs. Supports adding/editing/deleting local events,
 // marking events as done (day planning), and connecting Google Calendar via
-// backend OAuth proxy.
+// frontend-only OAuth (Authorization Code + PKCE — see src/googleAuth.ts).
 
 import { useEffect, useMemo, useState, useCallback } from "react";
 import {
@@ -24,8 +24,15 @@ import type {
   CalendarEvent,
   CalendarEventCreate,
   CalendarEventUpdate,
-  GoogleAuthStatus,
 } from "../types";
+import {
+  beginGoogleLogin,
+  getStoredTokens,
+  getValidAccessToken,
+  clearStoredTokens,
+  handleGoogleRedirect,
+  isGoogleConfigured,
+} from "../googleAuth";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = [
@@ -58,30 +65,61 @@ export function CalendarPage() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
-  const [googleStatus, setGoogleStatus] = useState<GoogleAuthStatus | null>(null);
+
+  // Google OAuth lives entirely in the browser. The backend never sees the
+  // access_token outside of a single Bearer header on /sync.
+  const [googleConfigured, setGoogleConfigured] = useState(isGoogleConfigured());
+  const [googleConnected, setGoogleConnected] = useState(false);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  const [oauthPending, setOauthPending] = useState(false);
+
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
+  // On mount, if we were redirected back from Google with ?code=...&state=...,
+  // exchange the code for tokens (PKCE) and clean the URL.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.get("code") && !url.searchParams.get("error")) return;
+    setOauthPending(true);
+    handleGoogleRedirect()
+      .then((res) => {
+        if (res.ok) {
+          const stored = getStoredTokens();
+          setGoogleConnected(true);
+          setGoogleEmail(stored?.email ?? res.email ?? null);
+        } else {
+          setErr(res.error ?? "Google sign-in failed.");
+        }
+      })
+      .finally(() => setOauthPending(false));
+  }, []);
+
+  // Sync the local "connected?" state with whatever is in localStorage.
+  useEffect(() => {
+    const t = getStoredTokens();
+    setGoogleConnected(!!t?.access_token);
+    setGoogleEmail(t?.email ?? null);
+    setGoogleConfigured(isGoogleConfigured());
+  }, []);
+
   const loadAll = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      // Calculate month range for the grid (includes overlap days)
       const first = startOfMonth(cursor);
       const gridStart = new Date(first);
       gridStart.setDate(first.getDate() - first.getDay());
       const gridEnd = new Date(gridStart);
       gridEnd.setDate(gridStart.getDate() + 41);
-      const [localRes, hermesRes, gStatus] = await Promise.all([
+      const [localRes, hermesRes] = await Promise.all([
         api.listCalendarEvents(toISODate(gridStart), toISODate(gridEnd)),
         api.listHermesCalendarEvents().catch(() => ({ events: [], count: 0 })),
-        api.getGoogleAuthStatus().catch(() => null),
       ]);
       const all = [...localRes.events, ...hermesRes.events];
       setEvents(all);
-      setGoogleStatus(gStatus);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -91,7 +129,6 @@ export function CalendarPage() {
 
   useEffect(() => { void loadAll(); }, [loadAll]);
 
-  // Index events by day
   const byDay = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
     for (const ev of events) {
@@ -102,7 +139,6 @@ export function CalendarPage() {
       arr.push(ev);
       map.set(k, arr);
     }
-    // Sort each day's events: by time (nulls last), then source
     for (const arr of map.values()) {
       arr.sort((a, b) => {
         if (a.time && b.time) return a.time.localeCompare(b.time);
@@ -114,7 +150,6 @@ export function CalendarPage() {
     return map;
   }, [events]);
 
-  // Build 6-week grid
   const grid = useMemo(() => {
     const first = startOfMonth(cursor);
     const start = new Date(first);
@@ -128,12 +163,10 @@ export function CalendarPage() {
     return out;
   }, [cursor]);
 
-  // Events for the selected day
   const selectedDayEvents = useMemo(() => {
     return byDay.get(dayKey(selectedDate)) ?? [];
   }, [byDay, selectedDate]);
 
-  // --- event actions ---
   async function handleCreate(data: CalendarEventCreate) {
     try {
       await api.createCalendarEvent(data);
@@ -175,10 +208,12 @@ export function CalendarPage() {
     }
   }
 
+  // Frontend-only OAuth: redirect the tab to Google's consent screen. The
+  // PKCE verifier + state are stashed in sessionStorage; the redirect-back
+  // handler exchanges the code (no client_secret — Desktop-app client).
   async function handleGoogleLogin() {
     try {
-      const url = await api.getGoogleLoginUrl();
-      window.open(url, "_blank");
+      await beginGoogleLogin();
     } catch (e) {
       setErr((e as Error).message);
     }
@@ -188,7 +223,13 @@ export function CalendarPage() {
     setSyncing(true);
     setSyncMsg(null);
     try {
-      const result = await api.syncGoogleCalendar();
+      const token = await getValidAccessToken();
+      if (!token) {
+        setGoogleConnected(false);
+        setSyncMsg("Session expired — please reconnect Google.");
+        return;
+      }
+      const result = await api.syncGoogleCalendar(token);
       setSyncMsg(`Synced ${result.synced} of ${result.total} events from Google Calendar`);
       await loadAll();
     } catch (e) {
@@ -198,13 +239,11 @@ export function CalendarPage() {
     }
   }
 
-  async function handleGoogleDisconnect() {
-    try {
-      await api.disconnectGoogle();
-      await loadAll();
-    } catch (e) {
-      setErr((e as Error).message);
-    }
+  function handleGoogleDisconnect() {
+    clearStoredTokens();
+    setGoogleConnected(false);
+    setGoogleEmail(null);
+    setSyncMsg(null);
   }
 
   return (
@@ -242,16 +281,20 @@ export function CalendarPage() {
           <div className="flex items-center gap-2">
             <GoogleLogo className="h-5 w-5" />
             <span className="text-sm font-medium text-slate-200">Google Calendar</span>
-            {googleStatus?.authenticated && googleStatus?.email && (
-              <span className="text-xs text-slate-400">({googleStatus.email})</span>
+            {googleConnected && googleEmail && (
+              <span className="text-xs text-slate-400">({googleEmail})</span>
             )}
           </div>
           <div className="flex items-center gap-2">
-            {!googleStatus?.configured ? (
+            {!googleConfigured ? (
               <span className="text-xs text-slate-500">
-                Set GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET in backend .env to enable
+                Set VITE_GOOGLE_CLIENT_ID (Desktop-app OAuth client) to enable
               </span>
-            ) : !googleStatus?.authenticated ? (
+            ) : oauthPending ? (
+              <span className="flex items-center gap-1.5 text-xs text-slate-400">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Finishing sign-in…
+              </span>
+            ) : !googleConnected ? (
               <button
                 onClick={handleGoogleLogin}
                 className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500"
@@ -292,7 +335,6 @@ export function CalendarPage() {
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         {/* Calendar grid */}
         <div>
-          {/* Month controls */}
           <div className="mb-3 flex items-center justify-between">
             <button
               onClick={() => setCursor((c) => addMonths(c, -1))}
@@ -311,14 +353,12 @@ export function CalendarPage() {
             </button>
           </div>
 
-          {/* Weekday header */}
           <div className="grid grid-cols-7 gap-1 text-center text-[11px] uppercase tracking-wider text-slate-500 sm:text-xs">
             {WEEKDAYS.map((d) => (
               <div key={d} className="py-1">{d}</div>
             ))}
           </div>
 
-          {/* Day grid */}
           <div className="mt-1 grid grid-cols-7 gap-1">
             {grid.map((d) => {
               const inMonth = d.getMonth() === cursor.getMonth();
@@ -392,7 +432,7 @@ export function CalendarPage() {
             {showAddForm && (
               <EventForm
                 date={toISODate(selectedDate)}
-                onSubmit={handleCreate}
+                onSubmit={(data) => handleCreate(data as CalendarEventCreate)}
                 onCancel={() => setShowAddForm(false)}
               />
             )}
@@ -498,17 +538,16 @@ export function CalendarPage() {
 }
 
 // --- Event form (add / edit) ---
-function EventForm({
-  event,
-  date,
-  onSubmit,
-  onCancel,
-}: {
-  event?: CalendarEvent;
+interface EventFormProps {
   date: string;
-  onSubmit: (data: CalendarEventCreate) => Promise<void>;
+  event?: CalendarEvent;
+  onSubmit: (data: CalendarEventCreate | CalendarEventUpdate) => Promise<void>;
   onCancel: () => void;
-}) {
+}
+// The form emits CalendarEventCreate in add mode and CalendarEventUpdate in
+// edit mode; the parent narrows the union so handlers can stay typed.
+
+function EventForm({ date, event, onSubmit, onCancel }: EventFormProps) {
   const [title, setTitle] = useState(event?.title ?? "");
   const [description, setDescription] = useState(event?.description ?? "");
   const [eventDate, setEventDate] = useState(event?.date ?? date);
@@ -516,58 +555,68 @@ function EventForm({
   const [duration, setDuration] = useState(event?.duration_minutes?.toString() ?? "");
   const [saving, setSaving] = useState(false);
 
-  async function submit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
     setSaving(true);
-    await onSubmit({
+    const data: CalendarEventCreate | CalendarEventUpdate = {
       title: title.trim(),
       description: description.trim() || undefined,
       date: eventDate,
       time: time || undefined,
       duration_minutes: duration ? parseInt(duration, 10) : undefined,
-      done: event?.done ?? false,
-    });
-    setSaving(false);
+    };
+    if (event && "done" in event) {
+      (data as CalendarEventUpdate).done = event.done;
+    } else if (!event) {
+      (data as CalendarEventCreate).done = false;
+    }
+    try {
+      await onSubmit(data);
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <form onSubmit={submit} className="mb-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
+    <form onSubmit={handleSubmit} className="mb-3 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
       <input
-        className="input mb-2"
+        type="text"
         placeholder="Event title"
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         autoFocus
         required
+        className="input mb-2"
       />
       <div className="mb-2 grid grid-cols-2 gap-2">
         <input
           type="date"
-          className="input"
           value={eventDate}
           onChange={(e) => setEventDate(e.target.value)}
           required
+          className="input"
         />
         <input
           type="time"
-          className="input"
           value={time}
           onChange={(e) => setTime(e.target.value)}
+          className="input"
         />
       </div>
       <input
-        className="input mb-2"
-        placeholder="Duration (minutes) — optional"
         type="number"
+        placeholder="Duration (minutes) — optional"
         value={duration}
         onChange={(e) => setDuration(e.target.value)}
+        className="input mb-2"
       />
       <textarea
-        className="input mb-2 min-h-[60px] resize-y"
         placeholder="Description — optional"
         value={description}
         onChange={(e) => setDescription(e.target.value)}
+        rows={2}
+        className="input mb-2 min-h-[60px] resize-y"
       />
       <div className="flex justify-end gap-2">
         <button

@@ -102,3 +102,68 @@ Flat list below the grid showing every job from `data.jobs` with:
 ---
 
 *created by [@dhir0hit](https://github.com/dhir0hit) using [Hermes Agent](https://hermes-agent.nousresearch.com)*
+
+
+---
+
+## Google Calendar — frontend-only OAuth (PKCE)
+
+Google Calendar integration now runs entirely in the browser; the backend has
+no Google credentials, no `/api/calendar/google/login|callback|config|exchange|`
+endpoints, and no `google_token` table. Only one backend endpoint remains:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/calendar/google/sync` | Pull events from the user's primary Google Calendar (next 90 days) and upsert them as `source='google'` events. **Requires an `Authorization: Bearer <access_token>` header** — supplied by the frontend. |
+
+### Setup (one-time)
+
+1. In [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials),
+   create an OAuth client of type **"Desktop app"** (NOT "Web application").
+   Desktop clients have no client secret — PKCE (`code_verifier` +
+   `code_challenge = SHA-256(verifier)`) replaces it.
+2. Copy the client_id into `frontend/.env` as `VITE_GOOGLE_CLIENT_ID=...`.
+3. Add the Calendar API scope to the same Google project
+   (`Google Calendar API` → Enable).
+
+### Runtime flow (same-tab redirect)
+
+1. User opens `/calendar`, clicks **Connect Google**.
+2. `src/googleAuth.ts::beginGoogleLogin` generates a `code_verifier` and state,
+   stores them in `sessionStorage`, then `window.location.assign`s Google's
+   consent screen with `code_challenge_method=S256`.
+3. After consent, Google redirects back to `<origin>/calendar?code=...&state=...`.
+4. On mount, `CalendarPage` detects `?code=` and calls
+   `handleGoogleRedirect`, which:
+   - Verifies state matches `sessionStorage`,
+   - POSTs `{code, code_verifier, redirect_uri, grant_type=authorization_code}`
+     to `https://oauth2.googleapis.com/token` (NO `client_secret`),
+   - Stores `access_token` / `refresh_token` / `expires_at` / `email` in
+     `localStorage` under `dashboard.google.tokens.v1`,
+   - Cleans the URL (`history.replaceState`).
+5. **Sync now** → `getValidAccessToken()` refreshes if expired (using the
+   stored `refresh_token`), then calls `api.syncGoogleCalendar(token)` which
+   sets `Authorization: Bearer <token>` on `POST /api/calendar/google/sync`.
+6. **Disconnect** → `clearStoredTokens()` is purely client-side; no backend
+   call.
+
+### Files
+
+| File | Role |
+|---|---|
+| `frontend/src/googleAuth.ts` | PKCE helpers, token storage (`localStorage`), `beginGoogleLogin`, `handleGoogleRedirect`, `getValidAccessToken`, `clearStoredTokens`. |
+| `frontend/src/pages/CalendarPage.tsx` | UI; calls `googleAuth.ts` and `api.syncGoogleCalendar(token)`. |
+| `frontend/src/api.ts` | `syncGoogleCalendar(accessToken)` — one Bearer-header POST. |
+| `backend/app/main.py` | `POST /api/calendar/google/sync` — reads `Authorization: Bearer`, pulls events, upserts as `source='google'`. No Google credentials anywhere on the server. |
+
+### Pitfalls
+
+- The OAuth client MUST be "Desktop app" type. A "Web application" client
+  requires `client_secret` at token exchange, which a pure frontend flow
+  cannot provide without leaking it to the browser.
+- `prompt=consent` + `access_type=offline` are forced so Google always
+  returns a `refresh_token`; otherwise reconnects on the same account may
+  return only an `access_token` and silent refresh becomes impossible.
+- The token is visible to any script on the same origin (XSS risk). This is
+  the standard trade-off for a frontend-only flow — only Calendar.readonly
+  scope is requested to limit blast radius.

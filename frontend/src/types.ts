@@ -185,11 +185,10 @@ export interface CalendarListResponse {
   count: number;
 }
 
-export interface GoogleAuthStatus {
-  configured: boolean;
-  authenticated: boolean;
-  email?: string | null;
-}
+// Google OAuth is now handled entirely in the frontend (see googleAuth.ts):
+// the access/refresh tokens live in localStorage, and the backend's
+// /api/calendar/google/sync endpoint accepts the access_token as a Bearer
+// header. There is no backend GoogleAuthStatus/GoogleConfig model anymore.
 
 export interface CronListResponse {
   jobs: CronEntry[];

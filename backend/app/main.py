@@ -17,7 +17,7 @@ from typing import Optional
 from urllib.parse import quote_plus, urlparse
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Header, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -30,10 +30,6 @@ from .calendar_store import (
     update_event as db_update_event,
     delete_event as db_delete_event,
     upsert_google_event,
-    save_google_token,
-    get_google_token,
-    clear_google_token,
-    is_google_token_valid,
 )
 from .docker_discover import discover_docker_services
 from .mock_data import MOCK_HEALTH, MOCK_SERVICES
@@ -51,7 +47,6 @@ from .schemas import (
     CronListResponse,
     DashboardConfig,
     ErrorResponse,
-    GoogleAuthStatus,
     HealthResponse,
     ReorderRequest,
     SearchResponse,
@@ -780,9 +775,6 @@ def root() -> dict:
             "/api/search",
             "/api/cron",
             "/api/calendar/events",
-            "/api/calendar/google/status",
-            "/api/calendar/google/login",
-            "/api/calendar/google/callback",
             "/api/calendar/google/sync",
             "/api/calendar/hermes",
             "/health",
@@ -851,107 +843,35 @@ def delete_calendar_event(event_id: str) -> None:
         raise HTTPException(status_code=404, detail="Event not found")
 
 
-# ----------------------------------------------------- google calendar oauth
-
-@app.get("/api/calendar/google/status", response_model=GoogleAuthStatus, tags=["calendar"])
-def google_auth_status() -> GoogleAuthStatus:
-    """Check if Google Calendar is configured and authenticated."""
-    s = get_settings()
-    configured = bool(s.google_client_id and s.google_client_secret)
-    if not configured:
-        return GoogleAuthStatus(configured=False, authenticated=False)
-    authenticated = is_google_token_valid(_cal_db_path())
-    tok = get_google_token(_cal_db_path()) if authenticated else None
-    return GoogleAuthStatus(
-        configured=True,
-        authenticated=authenticated,
-        email=tok.get("email") if tok else None,
-    )
-
-
-@app.get("/api/calendar/google/login", tags=["calendar"])
-def google_login() -> dict:
-    """Redirect to Google's OAuth consent screen."""
-    s = get_settings()
-    if not s.google_client_id:
-        raise HTTPException(status_code=400, detail="GOOGLE_CLIENT_ID not configured")
-    from urllib.parse import urlencode
-    params = {
-        "client_id": s.google_client_id,
-        "redirect_uri": s.google_redirect_uri,
-        "response_type": "code",
-        "scope": "https://www.googleapis.com/auth/calendar.readonly email",
-        "access_type": "offline",
-        "prompt": "consent",
-    }
-    url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
-    # Return JSON instead of redirect so the frontend can open in a new tab
-    return {"auth_url": url}
-
-
-@app.get("/api/calendar/google/callback", tags=["calendar"])
-def google_callback(code: str = Query(...), error: Optional[str] = Query(None)):
-    """OAuth callback — exchanges the code for tokens, stores them, redirects to /calendar."""
-    if error:
-        raise HTTPException(status_code=400, detail=f"OAuth error: {error}")
-    s = get_settings()
-    if not s.google_client_id or not s.google_client_secret:
-        raise HTTPException(status_code=400, detail="Google OAuth not configured")
-    _ensure_cal_db()
-    # Exchange code for tokens
-    resp = httpx.post(
-        "https://oauth2.googleapis.com/token",
-        data={
-            "code": code,
-            "client_id": s.google_client_id,
-            "client_secret": s.google_client_secret,
-            "redirect_uri": s.google_redirect_uri,
-            "grant_type": "authorization_code",
-        },
-        timeout=10.0,
-    )
-    if resp.status_code != 200:
-        raise HTTPException(status_code=400, detail=f"Token exchange failed: {resp.text}")
-    tokens = resp.json()
-    # Get user email
-    email = None
-    if tokens.get("access_token"):
-        ui = httpx.get(
-            "https://www.googleapis.com/oauth2/v2/userinfo",
-            headers={"Authorization": f"Bearer {tokens['access_token']}"},
-            timeout=5.0,
-        )
-        if ui.status_code == 200:
-            email = ui.json().get("email")
-    # Calculate expiry
-    from datetime import timedelta
-    expires_in = tokens.get("expires_in", 3600)
-    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
-    save_google_token(
-        _cal_db_path(),
-        access_token=tokens["access_token"],
-        refresh_token=tokens.get("refresh_token"),
-        expires_at=expires_at,
-        email=email,
-        scope=tokens.get("scope"),
-    )
-    # Redirect back to the calendar page
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/calendar", status_code=302)
+# ----------------------------------------------------- google calendar sync
+# OAuth is now handled entirely in the frontend (Authorization Code + PKCE
+# with a Desktop-app Google client — no client_secret anywhere). The frontend
+# stores the access/refresh tokens in localStorage and passes the access_token
+# to this endpoint as `Authorization: Bearer <token>`. The backend uses it
+# only for this single Calendar fetch — it does not persist or refresh the
+# token.
 
 
 @app.post("/api/calendar/google/sync", tags=["calendar"])
-def google_calendar_sync() -> dict:
-    """Pull events from Google Calendar and upsert them as source='google'."""
+def google_calendar_sync(authorization: Optional[str] = Header(None)) -> dict:
+    """Pull events from Google Calendar and upsert them as source='google'.
+
+    Requires an `Authorization: Bearer <access_token>` header supplied by the
+    frontend (see src/googleAuth.ts). The backend never sees the refresh
+    token or the OAuth secret — there is no client_secret with a Desktop-app
+    Google OAuth client.
+    """
     _ensure_cal_db()
-    tok = get_google_token(_cal_db_path())
-    if not tok or not tok.get("access_token"):
-        raise HTTPException(status_code=401, detail="Not authenticated with Google")
-    # Refresh token if expired
-    access_token = tok["access_token"]
-    if not is_google_token_valid(_cal_db_path()):
-        access_token = _refresh_google_token(tok)
-    # Fetch primary calendar events for the next 90 days
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or malformed Authorization header (expected 'Bearer <token>')",
+        )
+    access_token = authorization.split(" ", 1)[1].strip()
+    if not access_token:
+        raise HTTPException(status_code=401, detail="Empty bearer token")
+
+    # Fetch primary calendar events for the next 90 days.
     from datetime import timedelta
     now = datetime.now(timezone.utc)
     time_min = now.isoformat()
@@ -968,6 +888,8 @@ def google_calendar_sync() -> dict:
         },
         timeout=15.0,
     )
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="Token rejected by Google (expired or revoked)")
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Google API error: {resp.text}")
     data = resp.json()
@@ -979,7 +901,6 @@ def google_calendar_sync() -> dict:
         dt_str = start.get("dateTime") or start.get("date")
         if not dt_str:
             continue
-        # Parse date + time
         is_all_day = "date" in start and "dateTime" not in start
         dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
         date = dt.strftime("%Y-%m-%d")
@@ -1002,44 +923,6 @@ def google_calendar_sync() -> dict:
         upsert_google_event(_cal_db_path(), event)
         synced += 1
     return {"synced": synced, "total": len(items)}
-
-
-@app.delete("/api/calendar/google/disconnect", tags=["calendar"])
-def google_disconnect() -> dict:
-    """Revoke Google access — clears stored tokens."""
-    _ensure_cal_db()
-    clear_google_token(_cal_db_path())
-    return {"ok": True}
-
-
-def _refresh_google_token(tok: dict) -> str:
-    """Refresh an expired Google access token using the stored refresh token."""
-    s = get_settings()
-    if not tok.get("refresh_token"):
-        raise HTTPException(status_code=401, detail="Google token expired and no refresh token")
-    resp = httpx.post(
-        "https://oauth2.googleapis.com/token",
-        data={
-            "client_id": s.google_client_id,
-            "client_secret": s.google_client_secret,
-            "refresh_token": tok["refresh_token"],
-            "grant_type": "refresh_token",
-        },
-        timeout=10.0,
-    )
-    if resp.status_code != 200:
-        raise HTTPException(status_code=401, detail="Failed to refresh Google token")
-    data = resp.json()
-    from datetime import timedelta
-    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=data["expires_in"])).isoformat()
-    save_google_token(
-        _cal_db_path(),
-        access_token=data["access_token"],
-        refresh_token=tok["refresh_token"],
-        expires_at=expires_at,
-        email=tok.get("email"),
-    )
-    return data["access_token"]
 
 
 # ----------------------------------------------------- hermes cron → calendar

@@ -1,8 +1,12 @@
-"""SQLite-backed persistence for calendar events + Google OAuth tokens.
+"""SQLite-backed persistence for calendar events.
 
 Separate from dashboard_config — calendar events are their own table so
 they can be queried by date range without loading the whole config blob.
-Google tokens are stored in a single-row table (one user = one token).
+
+Google OAuth tokens are no longer stored here — OAuth moved entirely to the
+frontend (Authorization Code + PKCE, tokens live in browser localStorage).
+The backend's only Google endpoint (/api/calendar/google/sync) takes the
+access_token via a Bearer header on each request.
 """
 from __future__ import annotations
 
@@ -27,16 +31,6 @@ CREATE TABLE IF NOT EXISTS calendar_events (
     done INTEGER NOT NULL DEFAULT 0,
     google_event_id TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS google_token (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    access_token TEXT,
-    refresh_token TEXT,
-    expires_at TEXT,
-    email TEXT,
-    scope TEXT,
     updated_at TEXT NOT NULL
 );
 
@@ -183,68 +177,3 @@ def upsert_google_event(path: str, event: CalendarEvent) -> CalendarEvent:
         })
         return get_event(path, row["id"])
     return create_event(path, event)
-
-
-# --- Google token storage ----------------------------------------------
-
-
-def save_google_token(
-    path: str,
-    access_token: str,
-    refresh_token: Optional[str],
-    expires_at: str,
-    email: Optional[str] = None,
-    scope: Optional[str] = None,
-) -> None:
-    init_calendar_db(path)
-    now = datetime.now(timezone.utc).isoformat()
-    with _connect(path) as c:
-        c.execute(
-            """INSERT INTO google_token (id, access_token, refresh_token, expires_at,
-               email, scope, updated_at)
-               VALUES (1, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET
-                 access_token=excluded.access_token,
-                 refresh_token=COALESCE(excluded.refresh_token, google_token.refresh_token),
-                 expires_at=excluded.expires_at,
-                 email=COALESCE(excluded.email, google_token.email),
-                 scope=excluded.scope,
-                 updated_at=excluded.updated_at""",
-            (access_token, refresh_token, expires_at, email, scope, now),
-        )
-        c.commit()
-
-
-def get_google_token(path: str) -> Optional[dict]:
-    if not Path(path).exists():
-        return None
-    with _connect(path) as c:
-        row = c.execute("SELECT * FROM google_token WHERE id = 1").fetchone()
-    if not row:
-        return None
-    return {
-        "access_token": row["access_token"],
-        "refresh_token": row["refresh_token"],
-        "expires_at": row["expires_at"],
-        "email": row["email"],
-        "scope": row["scope"],
-    }
-
-
-def clear_google_token(path: str) -> None:
-    if not Path(path).exists():
-        return
-    with _connect(path) as c:
-        c.execute("DELETE FROM google_token WHERE id = 1")
-        c.commit()
-
-
-def is_google_token_valid(path: str) -> bool:
-    tok = get_google_token(path)
-    if not tok or not tok.get("access_token") or not tok.get("expires_at"):
-        return False
-    try:
-        exp = datetime.fromisoformat(tok["expires_at"].replace("Z", "+00:00"))
-        return datetime.now(timezone.utc) < exp
-    except (ValueError, TypeError):
-        return False

@@ -251,11 +251,10 @@ class CalendarListResponse(BaseModel):
     count: int = 0
 
 
-class GoogleAuthStatus(BaseModel):
-    configured: bool  # are client_id + secret set in env?
-    authenticated: bool  # do we have a valid (non-expired) token?
-    email: Optional[str] = None
-    auth_url: Optional[str] = None  # URL the frontend should redirect to
+# Google OAuth moved entirely to the frontend (PKCE + Desktop-app client).
+# There is no GoogleAuthStatus / GoogleCodeExchange / GoogleConfigResponse
+# model on the backend anymore — the browser stores the tokens and posts
+# the access_token as a Bearer header on /api/calendar/google/sync.
 
 
 # --------------------------------------------------------------- search proxy

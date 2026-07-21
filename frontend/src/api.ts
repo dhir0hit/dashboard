@@ -7,7 +7,6 @@ import {
   CalendarListResponse,
   CronListResponse,
   DashboardConfig,
-  GoogleAuthStatus,
   HealthResponse,
   SearchResponse,
   ServiceEntry,
@@ -154,7 +153,7 @@ export const api = {
   },
 
   // ─────────────────────────────────────────────────────────────────────
-  // Root-task (t_c8aa6b03) endpoints: bookmarks, custom themes, cron, search.
+  // Root-task (t_c8aa03) endpoints: bookmarks, custom themes, cron, search.
   // ─────────────────────────────────────────────────────────────────────
   async listBookmarks(): Promise<Bookmark[]> {
     const res = await fetch(`${API_BASE}/api/config/bookmarks`);
@@ -223,7 +222,7 @@ export const api = {
   },
 
   // ─────────────────────────────────────────────────────────────────────
-  // Widget registry + per-tile auto-login (t_d7921f0b).
+  // Widget registry + per-tile auto-login (t_d79c0f0b).
   // ─────────────────────────────────────────────────────────────────────
   async listWidgets(): Promise<WidgetDefinition[]> {
     const res = await fetch(`${API_BASE}/api/widgets`, {
@@ -284,25 +283,17 @@ export const api = {
     await jsonOrThrow<void>(res);
   },
 
-  async getGoogleAuthStatus(): Promise<GoogleAuthStatus> {
-    const res = await fetch(`${API_BASE}/api/calendar/google/status`);
+  // Google Calendar sync now runs purely off the access_token the frontend
+  // obtained via OAuth (see googleAuth.ts). The token is sent as a Bearer
+  // header; the backend no longer stores or refreshes Google tokens.
+  async syncGoogleCalendar(accessToken: string): Promise<{ synced: number; total: number }> {
+    const res = await fetch(`${API_BASE}/api/calendar/google/sync`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
     return jsonOrThrow(res);
-  },
-
-  async getGoogleLoginUrl(): Promise<string> {
-    const res = await fetch(`${API_BASE}/api/calendar/google/login`);
-    const data = await jsonOrThrow<{ auth_url: string }>(res);
-    return data.auth_url;
-  },
-
-  async syncGoogleCalendar(): Promise<{ synced: number; total: number }> {
-    const res = await fetch(`${API_BASE}/api/calendar/google/sync`, { method: "POST" });
-    return jsonOrThrow(res);
-  },
-
-  async disconnectGoogle(): Promise<void> {
-    const res = await fetch(`${API_BASE}/api/calendar/google/disconnect`, { method: "DELETE" });
-    await jsonOrThrow<void>(res);
   },
 
   async listHermesCalendarEvents(): Promise<CalendarListResponse> {
