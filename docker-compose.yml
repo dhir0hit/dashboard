@@ -1,0 +1,89 @@
+# Proxmox Dashboard — full stack.
+#
+# Runs the FastAPI backend + nginx-served React frontend behind a single
+# published port (8888 by default). The frontend reverse-proxies /api and
+# /wallpapers to the backend, so the user only needs to talk to one origin.
+#
+# Quick start (mock mode, no Proxmox needed):
+#   docker compose up --build
+# Then open http://localhost:8888
+#
+# Real Proxmox: edit the `backend.environment` block (or set up a .env file
+# at the repo root and uncomment `env_file`) before `docker compose up`.
+
+services:
+  backend:
+    build: ./backend
+    container_name: dashboard-backend
+    # Internal port is always 8000; the frontend proxies to it.
+    expose:
+      - "8000"
+    # Don't publish 8000 directly — the frontend is the user-facing edge.
+    # Enable this only if you want direct API access during debugging:
+    # ports:
+    #   - "8000:8000"
+    environment:
+      # --- Proxmox connection (override for your host) -------------------
+      PROXMOX_API_URL: ${PROXMOX_API_URL:-https://proxmox.local:8006/}
+      PROXMOX_API_TOKEN: ${PROXMOX_API_TOKEN:-}
+      PROXMOX_VERIFY_TLS: ${PROXMOX_VERIFY_TLS:-false}
+      PROXMOX_NODE: ${PROXMOX_NODE:-}
+
+      # --- SSH for in-guest Docker discovery -----------------------------
+      # Optional. When empty, the backend falls back to `pct exec` for LXC
+      # guests (works only if the backend container can talk to the PVE host
+      # API and a PVE API token grants pct permissions).
+      SSH_HOST: ${SSH_HOST:-}
+      SSH_PORT: ${SSH_PORT:-22}
+      SSH_USER: ${SSH_USER:-root}
+      SSH_KEY_FILE: ${SSH_KEY_FILE:-}
+      SSH_PASSWORD: ${SSH_PASSWORD:-}
+
+      # --- Mode + persistence --------------------------------------------
+      # MOCK=true → no real Proxmox host required (dry-run for development).
+      MOCK: ${MOCK:-true}
+      CONFIG_DB: /data/config.db
+
+      # Host/port — kept internal-only. Frontend proxies to `backend:8000`.
+      HOST: 0.0.0.0
+      PORT: 8000
+    # If you keep real secrets in a .env file at the repo root, uncomment:
+    # env_file:
+    #   - .env
+    volumes:
+      # SQLite config database — persists across restarts.
+      - dashboard-config:/data
+      # Uploaded wallpapers — persists across restarts.
+      - dashboard-wallpapers:/app/wallpapers
+      # Optional: mount the host Docker socket so the backend can discover
+      # services running directly on the host (set DOCKER_SOCK=/var/run/docker.sock
+      # on bare-metal Docker discovery). COMMENT OUT if you do not want the
+      # backend to have host Docker access.
+      - ${DOCKER_SOCK:-/dev/null}:/var/run/docker.sock
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build: ./frontend
+    container_name: dashboard-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      # Single user-facing port. Connect to http://localhost:8888
+      - "${DASHBOARD_PORT:-8888}:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  dashboard-config:
+  dashboard-wallpapers:

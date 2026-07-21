@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+config.db
+config.db-*
+*.log
+*.tar.gz
+.env
+# Keep .env.example so the README can reference it; .env is user secrets.
+wallpapers/
+# Wallpapers are runtime data — mounted as a volume, not baked in.

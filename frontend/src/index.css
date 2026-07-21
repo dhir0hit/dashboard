@@ -1,0 +1,157 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(34, 211, 238, 0.12), transparent 60%),
+    radial-gradient(1000px 500px at 110% 10%, rgba(232, 121, 249, 0.10), transparent 55%),
+    #050816;
+}
+
+@layer components {
+  .glass {
+    @apply rounded-2xl border border-white/10 bg-slate-900/60 shadow-2xl backdrop-blur-xl;
+  }
+  .btn {
+    @apply inline-flex select-none items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-cyan-500/90 text-slate-950 hover:bg-cyan-400;
+  }
+  .btn-ghost {
+    @apply btn border border-white/10 bg-white/5 hover:bg-white/10;
+  }
+  .btn-danger {
+    @apply btn bg-rose-600/90 text-white hover:bg-rose-500;
+  }
+  .input {
+    @apply w-full rounded-xl border border-white/10 bg-slate-950/70 px-3 py-2 text-sm outline-none transition placeholder:text-slate-500 focus:border-cyan-400/70 focus:ring-2 focus:ring-cyan-400/20;
+  }
+  .label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-400;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium;
+  }
+  /* Status dot — colored circle + pulsing halo for "running". */
+  .status-dot {
+    @apply relative inline-block h-2.5 w-2.5 shrink-0 rounded-full;
+  }
+  .status-dot::after {
+    content: "";
+    @apply absolute -inset-1 rounded-full opacity-60;
+  }
+  .status-dot-running {
+    @apply bg-emerald-400;
+  }
+  .status-dot-running::after {
+    @apply bg-emerald-400 animate-status-pulse;
+  }
+  .status-dot-stopped {
+    @apply bg-rose-400;
+  }
+  .status-dot-stopped::after {
+    @apply bg-rose-400;
+  }
+  .status-dot-paused {
+    @apply bg-amber-400;
+  }
+  .status-dot-paused::after {
+    @apply bg-amber-400;
+  }
+  .status-dot-unknown {
+    @apply bg-slate-500;
+  }
+  .status-dot-unknown::after {
+    @apply bg-slate-500;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Animated gradient background (HomePage, t_dc212077).
+ * Drives the .bg-gradient layer — the gradient is set inline via CSS vars
+ * (--g1/--g2/--g3) from the configured gradient_colors; the keyframes shift
+ * the background position so the colors orbit slowly.
+ * ───────────────────────────────────────────────────────────────────── */
+@keyframes bgGradientShift {
+  0%   { background-position:   0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position:   0% 50%; }
+}
+.bg-gradient-animated {
+  background: linear-gradient(
+    120deg,
+    var(--g1, #0ea5e9),
+    var(--g2, #7c3aed),
+    var(--g3, #ec4899),
+    var(--g2, #7c3aed),
+    var(--g1, #0ea5e9)
+  );
+  background-size: 300% 300%;
+  animation: bgGradientShift 24s ease-in-out infinite;
+  filter: saturate(140%) brightness(0.55);
+}
+
+/* Particle canvas — the HomePage draws drifting dots on it. */
+.bg-particles-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Wallpaper — scaled-cover with a slow Ken-Burns push in. */
+@keyframes bgKenBurns {
+  0%   { transform: scale(1.05) translate3d(0, 0, 0); }
+  100% { transform: scale(1.15) translate3d(-2%, -1%, 0); }
+}
+.bg-wallpaper-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: bgKenBurns 36s ease-in-out infinite alternate;
+}
+
+/* Status pulse halo — used by .status-dot-running::after. */
+@keyframes statusPulse {
+  0%   { opacity: 0.65; transform: scale(1); }
+  70%  { opacity: 0;     transform: scale(2.4); }
+  100% { opacity: 0;     transform: scale(2.4); }
+}
+.animate-status-pulse {
+  animation: statusPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Tile hover lift — keep card layering subtle so the bg animation reads. */
+.tile-card {
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 180ms ease,
+              border-color 180ms ease;
+}
+.tile-card:hover {
+  transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bg-gradient-animated,
+  .bg-wallpaper-img,
+  .animate-status-pulse,
+  .tile-card {
+    animation: none !important;
+    transition: none !important;
+  }
+  .bg-gradient-animated { background-position: 0% 50%; }
+  .bg-wallpaper-img { transform: scale(1.05); }
+}

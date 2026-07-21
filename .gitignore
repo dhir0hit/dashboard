@@ -1,0 +1,46 @@
+# --- Secrets & local config ---
+.env
+.env.*
+!.env.example
+backend/.env
+
+# --- Backend runtime data ---
+backend/config.db
+backend/config.db-*
+backend/wallpapers/
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Build artifacts & archives ---
+*.tar.gz
+backend-artifacts.tar.gz
+backend/=0.0.9
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Frontend ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/tsconfig.tsbuildinfo
+*.log
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Local task / kanban scratch (not part of the project) ---
+board.md
+t_*_status.md
+.hermes/

@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.vite/
+*.log
+*.local
+# Don't bake in the dev .env — built bundle uses VITE_* at build time only,
+# and the production API base is empty (nginx reverse-proxies).
+.env
+.env.*
