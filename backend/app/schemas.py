@@ -129,6 +129,7 @@ class ServiceEntry(BaseModel):
     icon: Optional[str] = None  # emoji or short hint like "sonarr"
     icon_url: Optional[str] = None  # custom icon URL (.svg/.png/.jpg) — overrides emoji
     container_id: Optional[str] = None
+    category: Optional[str] = None  # user-defined grouping (e.g. "Media", "Monitoring")
     display_order: int = 0
     # --- Widget integration -------------------------------------------------
     widget_type: Optional[str] = None  # one of WIDGET_REGISTRY keys, or None

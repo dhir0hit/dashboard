@@ -70,7 +70,7 @@ Renders `null` — pure side effect.
 
 Desktop-only (`hidden md:block`) sticky top bar:
 
-- "◈ Server Dashboard" brand.
+- "◈ Dashboard" brand.
 - `<nav>` of 5 `<NavLink>`s from the `NAV` array (Home, Search, Bookmarks,
   Calendar, Settings). Active link gets `bg-white/10 text-white`; inactive
   gets `text-slate-400 hover:text-white`.

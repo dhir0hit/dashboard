@@ -141,6 +141,7 @@ Widget integration fields (`widget_type`, `api_url`, `api_key`, `username`,
 | `url` | `Optional[str]` | `None` | Click-through URL (also used as `api_url` fallback). |
 | `icon` | `Optional[str]` | `None` | Emoji or short hint. |
 | `container_id` | `Optional[str]` | `None` | Linked `Service.id`. |
+| `category` | `Optional[str]` | `None` | User-defined grouping (e.g. "Media", "Monitoring"). |
 | `display_order` | `int` | `0` | Sort key. |
 | `widget_type` | `Optional[str]` | `None` | One of `WIDGET_REGISTRY` ids (`"grafana"`, `"proxmox"`, etc.). |
 | `api_url` | `Optional[str]` | `None` | Base URL of the service API/web UI. |

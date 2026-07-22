@@ -73,6 +73,7 @@ optionally via `container_id`.
 | `url?` | `string` | Click-through URL (also used as `api_url` fallback). |
 | `icon?` | `string` | Emoji or short hint like `"grafana"`. |
 | `container_id?` | `string` | Linked `DiscoveredService.id` for status overlay. |
+| `category?` | `string` | User-defined grouping (e.g. "Media", "Monitoring"). |
 | `display_order` | `number` | Sort key. |
 | `status?` | `ServiceStatus` | Optional surfaced status (read-only). |
 | `ports?` | `{ host; container; protocol }[]` | Optional surfaced ports. |

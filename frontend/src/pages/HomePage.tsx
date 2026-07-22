@@ -116,7 +116,10 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
     });
   }, [config.services, byContainerId, healthById]);
 
-  // --- group tiles by guest (vmid:node:kind) or "Unlinked" --------------
+  // --- group tiles by user-defined category --------------------------------
+  // Users can assign a category to each tile in the Settings page. Tiles without
+  // a category are grouped under "Uncategorized". This replaces the old VM/node
+  // grouping so users can organize tiles by function (e.g., "Media", "Monitoring").
   const groups = useMemo(() => {
     const filtered = tiles.filter((t) => {
       if (filter !== "all" && t.effectiveStatus !== filter) return false;
@@ -131,9 +134,7 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
     });
     const buckets = new Map<string, Tile[]>();
     for (const t of filtered) {
-      const key = t.discovered
-        ? `${t.discovered.node} · ${t.discovered.kind.toUpperCase()} ${t.discovered.vmid}`
-        : "Unlinked";
+      const key = t.entry.category?.trim() || "Uncategorized";
       buckets.set(key, [...(buckets.get(key) ?? []), t]);
     }
     return [...buckets.entries()];

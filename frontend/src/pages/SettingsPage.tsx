@@ -331,6 +331,7 @@ interface FormState {
   icon: string;
   icon_url: string;
   container_id: string;
+  category: string;
   widget_type: string;
   api_url: string;
   api_key: string;
@@ -360,6 +361,7 @@ function ServiceForm({
     icon: initial?.icon ?? "",
     icon_url: initial?.icon_url ?? "",
     container_id: initial?.container_id ?? "",
+    category: initial?.category ?? "",
     widget_type: initial?.widget_type ?? "generic",
     api_url: initial?.api_url ?? "",
     api_key: initial?.api_key ?? "",
@@ -382,6 +384,7 @@ function ServiceForm({
         icon: form.icon.trim() || undefined,
         icon_url: form.icon_url.trim() || undefined,
         container_id: form.container_id.trim() || undefined,
+        category: form.category.trim() || undefined,
         widget_type: form.widget_type && form.widget_type !== "generic" ? form.widget_type : undefined,
         api_url: form.api_url.trim() || undefined,
         api_key: authSchema === "api_key" ? (form.api_key || undefined) : undefined,
@@ -429,6 +432,19 @@ function ServiceForm({
         {selectedWidget?.description && (
           <p className="mt-1 text-[11px] text-slate-500">{selectedWidget.description}</p>
         )}
+      </div>
+
+      <div>
+        <label className="label">Category (optional)</label>
+        <input
+          className="input"
+          value={form.category}
+          onChange={(e) => setForm({ ...form, category: e.target.value })}
+          placeholder="Media, Monitoring, Networking"
+        />
+        <p className="mt-1 text-[11px] text-slate-500">
+          Group tiles by category on the home page. Leave empty for ungrouped.
+        </p>
       </div>
 
       <div>

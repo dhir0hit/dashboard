@@ -108,9 +108,9 @@ Same filter logic as `groups` (filter + query), applied to `unlinkedTiles`.
 
 ### `groups: [string, Tile[]][]`
 
-User tiles only, filtered, then bucketed by guest key
-(`${node} · ${KIND} ${vmid}` for linked tiles, `"Unlinked"` for tiles with
-no `discovered` mapping).
+User tiles only, filtered, then bucketed by user-defined category
+(`${entry.category}` for tiles with a category, `"Uncategorized"` for tiles
+without one).
 
 ### `stats: Stats`
 

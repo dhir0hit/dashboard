@@ -66,7 +66,7 @@ The pill is the source of truth for save state across the page.
   name/url/icon fields, the container_id linker dropdown, and Edit/Delete
   buttons. `useSortable` returns transform/transition CSS that the row
   applies for the drag animation.
-- `TileEditor` — form with `name`, `url`, `icon`, `container_id`. Used for
+- `TileEditor` — form with `name`, `url`, `icon`, `container_id`, `category`. Used for
   both Add and Edit (in Edit mode, fields are pre-populated and the save
   button label changes). On submit, calls either `onAdd` or `onUpdate`.
 

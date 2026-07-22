@@ -26,7 +26,7 @@ Each widget definition is a dict with:
 | `basic` | `api_url` + `username` + `password` | POST with HTTP Basic auth. |
 | `form` | `api_url` + `username` + `password` | POST with `application/x-www-form-urlencoded` body. |
 
-## Built-in widgets (14)
+## Built-in widgets (15)
 
 | id | name | auth_schema |
 |---|---|---|
@@ -38,6 +38,7 @@ Each widget definition is a dict with:
 | `qbit_torrent` | qBittorrent | form |
 | `sonarr` | Sonarr | api_key |
 | `radarr` | Radarr | api_key |
+| `lidarr` | Lidarr | api_key |
 | `transmission` | Transmission | basic |
 | `pihole` | Pi-hole | api_key |
 | `homeassistant` | Home Assistant | api_key |

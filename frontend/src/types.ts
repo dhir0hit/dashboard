@@ -53,6 +53,7 @@ export interface ServiceEntry {
   icon?: string;         // emoji or short hint like "sonarr"
   icon_url?: string;     // custom icon URL (.svg/.png/.jpg) — overrides emoji
   container_id?: string; // e.g. "pve-lxc-100-docker-sonarr"
+  category?: string;     // e.g. "Media", "Monitoring", "Networking"
   display_order: number;
   // Optional read-only fields surfaced from Proxmox discovery (not editable
   // from the settings page — they come from /api/services).

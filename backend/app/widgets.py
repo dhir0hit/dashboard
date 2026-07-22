@@ -96,6 +96,15 @@ WIDGET_REGISTRY: list[dict[str, Any]] = [
         "description": "Movie manager. Same API key flow as Sonarr.",
     },
     {
+        "id": "lidarr",
+        "name": "Lidarr",
+        "icon_hint": "lidarr",
+        "auth_schema": "api_key",
+        "login_path": "/api/v1/login",
+        "auth_header_format": "X-Api-Key: {token}",
+        "description": "Music collection manager. Use the API key from Settings → General → API Key.",
+    },
+    {
         "id": "transmission",
         "name": "Transmission",
         "icon_hint": "transmission",

@@ -36,7 +36,7 @@ function Header() {
     <header className="sticky top-0 z-30 hidden border-b border-white/5 bg-slate-950/40 backdrop-blur-xl md:block">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
         <div className="text-sm font-semibold tracking-tight text-slate-200">
-          <span className="mr-2 text-cyan-400">◈</span> Server Dashboard
+          <span className="mr-2 text-cyan-400">◈</span> Dashboard
         </div>
         <nav className="flex items-center gap-1">
           {NAV.map(({ to, end, label, Icon }) => (
@@ -65,7 +65,7 @@ function MobileTopBar() {
     <header className="sticky top-0 z-30 border-b border-white/5 bg-slate-950/50 backdrop-blur-xl md:hidden">
       <div className="flex items-center justify-center px-4 py-3">
         <div className="text-sm font-semibold tracking-tight text-slate-200">
-          <span className="mr-2 text-cyan-400">◈</span> Server Dashboard
+          <span className="mr-2 text-cyan-400">◈</span> Dashboard
         </div>
       </div>
     </header>

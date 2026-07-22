@@ -4,54 +4,32 @@ Deterministic mock dataset so `/api/services` and
 `/api/services/{id}/health` work without a real Proxmox host. Active when
 `Settings.mock == True` (the compose default).
 
+**NOTE**: `MOCK_SERVICES` is intentionally empty — new deployments start with a
+blank dashboard. Users add tiles via the Settings page (`POST /api/config/services`).
+Mock health data is retained for testing the `/api/services/{id}/health` endpoint.
+
 ## Public constants
 
 ### `MOCK_SERVICES: list[Service]`
 
-Three hardcoded `Service` objects representing a typical *arr stack, each
-with a distinct status so the UI exercises every code path:
-
-| id | name | node | vmid | kind | status | image | ports | icon_hint |
-|---|---|---|---|---|---|---|---|---|
-| `pve-lxc-100-docker-sonarr` | sonarr | pve | 100 | lxc | running | `lscr.io/linuxserver/sonarr:latest` | `:8989` | sonarr |
-| `pve-lxc-100-docker-radarr` | radarr | pve | 100 | lxc | running | `lscr.io/linuxserver/radarr:latest` | `:7878` | radarr |
-| `pve-lxc-101-docker-lidarr` | lidarr | pve | 101 | lxc | stopped | `lscr.io/linuxserver/lidarr:latest` | `:8686` | lidarr |
+Empty list. Users start with a blank dashboard and add services via the UI.
 
 ### `MOCK_HEALTH: dict[str, ServiceHealth]`
 
-Built via a dict comprehension over every entry in `MOCK_SERVICES`, so
-**all 3 services have health entries** (not 2 — the comprehension
-includes every service regardless of status).
-
-```python
-MOCK_HEALTH = {
-    s.id: ServiceHealth(
-        id=s.id,
-        status=s.status,
-        healthy=(s.status == ServiceStatus.RUNNING),
-        uptime_seconds=126345 if s.status == ServiceStatus.RUNNING else 0,
-        last_seen="2026-07-19T16:45:00Z"
-                   if s.status == ServiceStatus.RUNNING else None,
-        message="ok" if s.status == ServiceStatus.RUNNING
-                else "container stopped",
-    )
-    for s in MOCK_SERVICES
-}
-```
+Contains a single test entry for demonstration purposes:
 
 | id | healthy | uptime_seconds | last_seen | message |
 |---|---|---|---|---|
-| sonarr | true | 126345 | `2026-07-19T16:45:00Z` | `"ok"` |
-| radarr | true | 126345 | `2026-07-19T16:45:00Z` | `"ok"` |
-| lidarr | false | 0 | `None` | `"container stopped"` |
+| test-service-1 | true | 126345 | `2026-07-19T16:45:00Z` | `"ok"` |
 
 ## Usage
 
 `main.get_services` returns `ServicesResponse(services=MOCK_SERVICES,
-source="mock", count=...)` when `Settings.mock` is true.
+source="mock", count=...)` when `Settings.mock` is true. Since `MOCK_SERVICES`
+is empty, mock mode returns an empty service list by default.
 
 `main.get_service_health` looks up `MOCK_HEALTH[service_id]` and returns
-404 if not found. Since `MOCK_HEALTH` is keyed on every service's id,
+404 if not found. Since `MOCK_HEALTH` only contains one test entry,
 unknown ids always come from a typo or a stale client link — the frontend
 treats 404 as "container not discovered" and shows the unlinked state.
 
