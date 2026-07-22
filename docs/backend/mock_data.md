@@ -1,5 +1,11 @@
 # `backend/app/mock_data.py`
 
+> **Note**: As of the latest update, `MOCK_SERVICES` is an empty list — the
+dashboard starts with a clean tile grid. Users add their own tiles via the
+Settings page. This avoids pre-populating the dashboard with unrelated
+default services.
+
+
 Deterministic mock dataset so `/api/services` and
 `/api/services/{id}/health` work without a real Proxmox host. Active when
 `Settings.mock == True` (the compose default).

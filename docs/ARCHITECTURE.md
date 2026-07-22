@@ -35,6 +35,8 @@ into `docs/backend/` and `docs/frontend/`.
 │                              │                                          │
 │                              ▼                                          │
 │                    LXC/QEMU guests → Docker containers                 │
+│                                                                         │
+│  Wallpaper storage: WALLPAPER_DIR env var (default: /app/wallpapers)    │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 

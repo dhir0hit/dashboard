@@ -1,16 +1,16 @@
 """Wallpaper upload/storage for the Settings page.
 
-Wallpapers are written to a directory on disk (default
-`<project>/backend/wallpapers`) and served via FastAPI's FileResponse at
-`/wallpapers/{filename}`. The directory is created lazily on first use.
+Wallpapers are written to a directory on disk and served via FastAPI's
+FileResponse at `/wallpapers/{filename}`. The directory is created lazily on
+first use.
 
-This is a minimal, dependency-free implementation sufficient for the
-frontend-visuals task (t_dc212077) to verify the dashboard end-to-end. A
-follow-up task can swap this for S3/CDN-backed storage without changing the
-public API shape.
+In Docker, the directory is `/app/wallpapers` (mounted as a named volume by
+docker-compose). Locally, it defaults to `<project>/backend/wallpapers`.
+Override either by setting the `WALLPAPER_DIR` environment variable.
 """
 from __future__ import annotations
 
+import os
 import re
 import secrets
 from pathlib import Path
@@ -18,9 +18,14 @@ from typing import Any
 
 from fastapi import UploadFile
 
-# Default storage directory — sibling of the SQLite config db so both stay
-# grouped under the backend directory. Resolved once at import time.
-_WALLPAPER_DIR = Path(__file__).resolve().parent.parent / "wallpapers"
+# Storage directory. Priority:
+#   1. WALLPAPER_DIR env var (explicit override — useful for Docker)
+#   2. <project>/backend/wallpapers (sibling of the app package, i.e.
+#      /app/wallpapers in the Docker container)
+# Resolved once at import time so all calls agree on the same path.
+_WALLPAPER_DIR = Path(
+    os.environ.get("WALLPAPER_DIR", Path(__file__).resolve().parent.parent / "wallpapers")
+)
 
 # Allowed content types. Anything else is rejected with a ValueError that the
 # FastAPI layer turns into a 400.

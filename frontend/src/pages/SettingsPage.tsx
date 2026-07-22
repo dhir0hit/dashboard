@@ -19,6 +19,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  AlertTriangle,
   Check,
   ChevronDown,
   GripVertical,
@@ -558,11 +559,13 @@ function BackgroundSection() {
   const bg = config.background;
   const [wallpapers, setWallpapers] = useState<{ id: string; url: string; name: string }[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function refreshWallpapers() {
     try {
-      const list = await fetch("/api/config/wallpapers").then((r) => (r.ok ? r.json() : []));
+      const list = await api.listWallpapers();
       setWallpapers(list);
     } catch {
       // ignore — endpoint may not exist yet
@@ -573,17 +576,33 @@ function BackgroundSection() {
     void refreshWallpapers();
   }, []);
 
-  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+  async function doUpload(file: File) {
     if (!file) return;
     setUploading(true);
+    setUploadError(null);
     try {
       await uploadWallpaper(file);
       await refreshWallpapers();
+    } catch (err) {
+      setUploadError(
+        (err as Error).message || "Upload failed. Check the file is a valid image under 8 MiB."
+      );
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
     }
+  }
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) await doUpload(file);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) void doUpload(file);
   }
 
   return (
@@ -624,19 +643,17 @@ function BackgroundSection() {
       {bg.mode === "gradient" && (
         <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/40 p-4 animate-fade-in">
           <div className="label">Gradient colors</div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="grid gap-3 sm:grid-cols-3">
             {(bg.gradient_colors ?? []).map((c, i) => (
-              <input
+              <ColorPicker
                 key={i}
-                type="color"
                 value={c}
-                onChange={(e) => {
+                onChange={(v) => {
                   const next = [...(bg.gradient_colors ?? [])];
-                  next[i] = e.target.value;
+                  next[i] = v;
                   void setBackground({ gradient_colors: next as [string, string, string] });
                 }}
-                className="h-9 w-12 cursor-pointer rounded border border-white/10 bg-transparent"
-                aria-label={`Gradient color ${i + 1}`}
+                label={`Stop ${i + 1}`}
               />
             ))}
           </div>
@@ -668,7 +685,7 @@ function BackgroundSection() {
             <div>
               <div className="text-sm font-medium text-white">Wallpaper</div>
               <p className="text-xs text-slate-400">
-                Upload a new wallpaper or pick one from the library.
+                Drag &amp; drop an image below, click Upload, or pick one from the library.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -692,12 +709,60 @@ function BackgroundSection() {
               <input
                 ref={fileRef}
                 type="file"
-                accept="image/*"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/avif,image/svg+xml"
                 onChange={handleUpload}
                 className="hidden"
               />
             </div>
           </div>
+
+          {/* Drag & drop dropzone */}
+          <div
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={handleDrop}
+            className={clsx(
+              "mt-4 flex cursor-pointer items-center justify-center rounded-xl border-2 border-dashed p-6 text-center transition",
+              dragOver
+                ? "border-cyan-400 bg-cyan-400/10"
+                : "border-white/10 bg-slate-950/40 hover:border-white/30"
+            )}
+            onClick={() => fileRef.current?.click()}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === "Enter") fileRef.current?.click(); }}
+          >
+            {uploading ? (
+              <div className="flex items-center gap-2 text-sm text-cyan-300">
+                <Loader2 className="h-5 w-5 animate-spin" /> Uploading…
+              </div>
+            ) : dragOver ? (
+              <div className="text-sm text-cyan-300">
+                <Upload className="mb-1 inline h-5 w-5" /> Drop the image to upload
+              </div>
+            ) : (
+              <div className="text-sm text-slate-400">
+                <Upload className="mb-1 inline h-5 w-5" /> Drag &amp; drop an image here, or click to browse
+                <div className="mt-1 text-[11px] text-slate-500">
+                  PNG, JPG, WebP, GIF, AVIF, SVG · max 8 MiB
+                </div>
+              </div>
+            )}
+          </div>
+
+          {uploadError && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-950/40 p-3 text-sm text-rose-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span className="break-all">{uploadError}</span>
+              <button
+                type="button"
+                onClick={() => setUploadError(null)}
+                className="ml-auto text-rose-300 hover:text-rose-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
 
           {bg.wallpaper_url && (
             <div className="mt-4 overflow-hidden rounded-xl border border-white/10">
@@ -803,12 +868,10 @@ function ThemeSection() {
           </select>
         </div>
         <div>
-          <label className="label">Accent color</label>
-          <input
-            type="color"
+          <ColorPicker
             value={t.accent_color}
-            onChange={(e) => void setTheme({ accent_color: e.target.value })}
-            className="h-10 w-full cursor-pointer rounded-xl border border-white/10 bg-transparent"
+            onChange={(v) => void setTheme({ accent_color: v })}
+            label="Accent color"
           />
         </div>
         <div>
@@ -939,15 +1002,12 @@ function NewThemeForm({
         { label: "Muted", value: muted, set: setMuted },
         { label: "Border", value: border, set: setBorder },
       ].map(({ label, value, set }) => (
-        <div key={label}>
-          <label className="label">{label}</label>
-          <input
-            type="color"
-            value={value}
-            onChange={(e) => set(e.target.value)}
-            className="h-10 w-full cursor-pointer rounded-xl border border-white/10 bg-transparent"
-          />
-        </div>
+        <ColorPicker
+          key={label}
+          label={label}
+          value={value}
+          onChange={set}
+        />
       ))}
       {err && <div className="text-sm text-rose-300 sm:col-span-2">{err}</div>}
       <div className="flex items-center justify-end gap-2 sm:col-span-2">
@@ -960,6 +1020,118 @@ function NewThemeForm({
         </button>
       </div>
     </form>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Color picker — hex input + native picker + preset swatches.
+// ────────────────────────────────────────────────────────────────────
+
+const PRESET_SWATCHES = [
+  "#22d3ee", "#06b6d4", "#0ea5e9", "#3b82f6", "#6366f1",
+  "#8b5cf6", "#a78bfa", "#7c3aed", "#ec4899", "#f43f5e",
+  "#ef4444", "#f97316", "#f59e0b", "#eab308", "#84cc16",
+  "#22c55e", "#10b981", "#14b8a6", "#64748b", "#0f172a",
+];
+
+function ColorPicker({
+  value,
+  onChange,
+  label,
+  className,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  label?: string;
+  className?: string;
+}) {
+  const [showSwatches, setShowSwatches] = useState(false);
+  const [hexInput, setHexInput] = useState(value);
+
+  // Sync the hex input when the external value changes (e.g. theme switch)
+  useEffect(() => {
+    setHexInput(value);
+  }, [value]);
+
+  function commitHex(v: string) {
+    let h = v.trim();
+    if (!h.startsWith("#")) h = "#" + h;
+    // Validate hex — allow 3 or 6 digit
+    if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(h)) {
+      onChange(h.toLowerCase());
+    } else {
+      // Reset to current value on invalid input
+      setHexInput(value);
+    }
+  }
+
+  return (
+    <div className={clsx("", className)}>
+      {label && <label className="label">{label}</label>}
+      <div className="flex items-center gap-2">
+        {/* Native color picker — styled as a rounded swatch */}
+        <div className="relative shrink-0">
+          <input
+            type="color"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="h-10 w-10 cursor-pointer rounded-lg border border-white/10 bg-transparent"
+            aria-label={label || "Color picker"}
+          />
+        </div>
+        {/* Hex text input */}
+        <input
+          type="text"
+          value={hexInput}
+          onChange={(e) => setHexInput(e.target.value)}
+          onBlur={(e) => commitHex(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          className="input font-mono text-sm"
+          placeholder="#000000"
+          maxLength={7}
+          spellCheck={false}
+          autoComplete="off"
+        />
+        {/* Swatches toggle button */}
+        <button
+          type="button"
+          onClick={() => setShowSwatches((v) => !v)}
+          className={clsx(
+            "btn-ghost shrink-0 px-2 py-2",
+            showSwatches && "bg-white/10"
+          )}
+          aria-label="Toggle preset swatches"
+          title="Preset colors"
+        >
+          <ChevronDown className={clsx("h-4 w-4 transition-transform", showSwatches && "rotate-180")} />
+        </button>
+      </div>
+      {showSwatches && (
+        <div className="mt-2 flex flex-wrap gap-1.5 animate-fade-in">
+          {PRESET_SWATCHES.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => {
+                onChange(c);
+                setShowSwatches(false);
+              }}
+              className={clsx(
+                "h-6 w-6 rounded-md border transition hover:scale-110",
+                value.toLowerCase() === c
+                  ? "border-cyan-400 ring-2 ring-cyan-400/30"
+                  : "border-white/10"
+              )}
+              style={{ background: c }}
+              aria-label={`Select color ${c}`}
+              title={c}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

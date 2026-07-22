@@ -26,7 +26,7 @@ Each widget definition is a dict with:
 | `basic` | `api_url` + `username` + `password` | POST with HTTP Basic auth. |
 | `form` | `api_url` + `username` + `password` | POST with `application/x-www-form-urlencoded` body. |
 
-## Built-in widgets (14)
+## Built-in widgets (32)
 
 | id | name | auth_schema |
 |---|---|---|
@@ -44,6 +44,24 @@ Each widget definition is a dict with:
 | `adguard` | AdGuard Home | basic |
 | `nginxproxymanager` | Nginx Proxy Manager | form |
 | `uptimekuma` | Uptime Kuma | none |
+| `lidarr` | Lidarr | api_key |
+| `prowlarr` | Prowlarr | api_key |
+| `readarr` | Readarr | api_key |
+| `overseerr` | Overseerr | api_key |
+| `bazarr` | Bazarr | basic |
+| `sabnzbd` | SABnzbd | api_key |
+| `deluge` | Deluge | basic |
+| `unraid` | Unraid | basic |
+| `truenas` | TrueNAS | api_key |
+| `synology` | Synology DSM | form |
+| `jellyfin` | Jellyfin | api_key |
+| `plex` | Plex | api_key |
+| `navidrome` | Navidrome | basic |
+| `nextcloud` | Nextcloud | basic |
+| `vaultwarden` | Vaultwarden | form |
+| `gitea` | Gitea | basic |
+| `immich` | Immich | api_key |
+| `paperlessngx` | Paperless-ngx | form |
 
 ## Public functions
 

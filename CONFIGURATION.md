@@ -20,7 +20,8 @@ setting (tiles, theme, background, bookmarks, search, calendar).
 | `hermes` CLI on the backend host (optional) | Needed for the Calendar page to show real jobs |
 
 Mock mode (`MOCK=true`, the default) needs **none** of the Proxmox/SSH/Hermes
-prerequisites — it ships canned data so you can explore the UI immediately.
+prerequisites — the dashboard starts empty so you can explore the Settings UI
+and add your own tiles.
 
 ---
 
@@ -31,9 +32,13 @@ cd Dashboard
 docker compose up --build
 ```
 
-Open <http://localhost:8888>. You'll see four mock services in the tile grid
-(grafana, prometheus, nginx, portainer), a working search page, an empty
-bookmarks page, and an empty calendar.
+Open <http://localhost:8888>. You'll see a clean tile grid (no pre-populated
+services), a working search page, an empty bookmarks page, and an empty
+calendar. Add tiles for your services via **Settings → Dashboard tiles → Add tile**.
+
+The dashboard ships with **32 widget types** in the auto-login registry, including
+Lidarr, Prowlarr, Readarr, Overseerr, Bazarr, SABnzbd, Deluge, Unraid, TrueNAS,
+Synology DSM, Jellyfin, Plex, Nextcloud, Immich, Paperless-ngx, and more.
 
 To switch to a real Proxmox host later, keep reading.
 
@@ -69,6 +74,7 @@ docker compose --env-file .env up --build
 | `SSH_KEY_FILE` | _(empty)_ | Path **inside the backend container** to a private key. Mount host keys via a compose volume override. |
 | `SSH_PASSWORD` | _(empty)_ | Alternative to `SSH_KEY_FILE` for password auth. |
 | `DOCKER_SOCK` | `/var/run/docker.sock` | Host Docker socket for discovering containers running directly on the host. Set to `/dev/null` to disable. |
+| `WALLPAPER_DIR` | `/app/wallpapers` (Docker) or `<project>/backend/wallpapers` (local) | Directory where uploaded wallpaper images are stored. |
 
 ### Minimal real-Proxmox `.env`
 
@@ -151,10 +157,14 @@ Settings page → **Background** section.
     API — see §5).
   - `Wallpaper` — use an uploaded image. Choose a wallpaper from the ones
     you've uploaded (see next bullet) and adjust the blend (opacity) slider.
-- **Uploading a wallpaper**: in the Background section, use the upload
-  control to drop an image file. It's stored in the `dashboard-wallpapers`
-  volume and immediately selectable. Previously uploaded wallpapers are
-  listed via `/api/config/wallpapers` (UI picker populates from this).
+- **Uploading a wallpaper**: in the Background section, drag & drop an image
+  onto the dropzone, or click **Upload** to browse. Uploaded wallpapers are stored
+  in the `dashboard-wallpapers` volume (`/app/wallpapers` in the container,
+  configurable via the `WALLPAPER_DIR` env var) and immediately selectable.
+  Previously uploaded wallpapers are listed via `/api/config/wallpapers`
+  (UI picker populates from this). The backend enforces an 8 MiB max upload
+  size; nginx is configured with a 16 MiB `client_max_body_size` to avoid
+  premature 413 errors. Supported formats: PNG, JPG, WebP, GIF, AVIF, SVG.
 
 ### 4.3 Theme
 
@@ -357,7 +367,7 @@ Variables override as usual (`MOCK=false PROXMOX_API_TOKEN=... uvicorn ...`).
 
 - [ ] `docker compose up --build` starts both containers (`Up (healthy)`).
 - [ ] <http://localhost:8888> loads the dashboard (not a blank page).
-- [ ] `/api/services` returns services (4 mock services in mock mode).
+- [ ] `/api/services` returns an empty list in mock mode (clean start).
 - [ ] Settings edits to tiles/theme/background survive a
       `docker compose down && docker compose up -d` cycle (SQLite volume).
 - [ ] `/health` returns `{"ok": true, "mock": bool, "pve": "<url>"}`.

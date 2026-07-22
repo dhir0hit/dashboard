@@ -25,7 +25,8 @@ VOLUME ["/data", "/app/wallpapers"]
 # across container restarts via the mounted volume.
 ENV HOST=0.0.0.0 \
     PORT=8000 \
-    CONFIG_DB=/data/config.db
+    CONFIG_DB=/data/config.db \
+    WALLPAPER_DIR=/app/wallpapers
 
 EXPOSE 8000
 

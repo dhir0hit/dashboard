@@ -52,15 +52,16 @@ talks to exactly one origin and no CORS configuration is needed in production.
 ## Quick start (mock mode)
 
 `docker compose up` defaults to `MOCK=true`, so the stack boots without a real
-Proxmox host:
+Proxmox host. The dashboard starts empty — add your own tiles via Settings:
 
 ```bash
 git clone <this repo> && cd Dashboard
 docker compose up --build
 ```
 
-Open http://localhost:8888 — you will see four mock services in the tile grid,
-search/filter controls, and the Settings page. Edit `PROXMOX_API_TOKEN`,
+Open http://localhost:8888 — you will see a clean tile grid (no pre-populated
+services), search/filter controls, and the Settings page. Add tiles for your
+services in Settings → Dashboard tiles → Add tile. Edit `PROXMOX_API_TOKEN`,
 `PROXMOX_API_URL`, and set `MOCK=false` to talk to a real host.
 
 ## Configuring for a real Proxmox host
@@ -165,7 +166,7 @@ npm run dev   # http://localhost:5173 — vite dev-proxies /api → :8000
 - **Self-signed Proxmox cert errors from the backend**: confirm
   `PROXMOX_VERIFY_TLS=false` is set in the backend environment.
 - **No services discovered**: check the backend logs
-  (`docker compose logs backend`). Mock mode returns 4 canned services; real
+  (`docker compose logs backend`). Mock mode returns an empty service list; real
   mode returns only guests that have Docker installed and reachable either via
   the Docker socket or SSH.
 - **`port 8888 is already in use`**: set `DASHBOARD_PORT=8000` (or any free

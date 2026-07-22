@@ -88,11 +88,13 @@ Controls `config.background` via `setBackground` from the store.
   `particle_speed` (only visible in `mode === "particles"`).
 - **Wallpaper blend** — a single `<RangeField>` (only visible in
   `mode === "wallpaper"`).
-- **Wallpaper picker + upload** — a list of previously uploaded wallpapers
-  (fetched via `api.listWallpapers()`) with thumbnails; selecting one sets
-  `wallpaper_url`. The upload control uses `api.uploadWallpaper(file)`
-  which uploads then immediately switches background to the new wallpaper
-  via `uploadWallpaper` in the store.
+- **Wallpaper picker + upload** — a drag-and-drop dropzone (accepts file drag
+  or click-to-browse) with error display. Uploaded wallpapers are fetched via
+  `api.listWallpapers()` with thumbnails; selecting one sets `wallpaper_url`.
+  The upload uses `api.uploadWallpaper(file)` which POSTs the image to the
+  backend and immediately switches background to the new wallpaper via
+  `uploadWallpaper` in the store. Supported: PNG, JPG, WebP, GIF, AVIF, SVG
+  (max 8 MiB). Upload errors are shown inline with a dismissible banner.
 
 ## Section: `ThemeSection`
 

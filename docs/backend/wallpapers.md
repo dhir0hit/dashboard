@@ -1,15 +1,15 @@
 # `backend/app/wallpapers.py`
 
-Wallpaper upload/storage for the Settings page. Minimal, dependency-free
-implementation sufficient for the frontend-visuals task. Wallpapers land on
-disk under `backend/wallpapers/` and are served via FastAPI's `FileResponse`
-at `/wallpapers/{filename}` in `main.py`.
+Wallpaper upload/storage for the Settings page. Wallpapers land on disk
+(configurable via `WALLPAPER_DIR` env var; defaults to `/app/wallpapers` in
+Docker, `<project>/backend/wallpapers` locally) and are served via FastAPI's
+`FileResponse` at `/wallpapers/{filename}` in `main.py`.
 
 ## Module-private constants
 
 | Name | Value | Purpose |
 |---|---|---|
-| `_WALLPAPER_DIR` | `Path(__file__).resolve().parent.parent / "wallpapers"` | Resolved once at import — the on-disk storage directory. |
+| `_WALLPAPER_DIR` | `Path(os.environ.get("WALLPAPER_DIR", ...))` | Storage directory. Defaults to `<project>/backend/wallpapers` locally or `/app/wallpapers` in Docker. Overridable via the `WALLPAPER_DIR` env var. |
 | `_ALLOWED_CONTENT_TYPES` | `{image/png, image/jpeg, image/jpg, image/webp, image/gif, image/avif, image/svg+xml}` | Allowed upload MIME types. |
 | `_EXT_BY_TYPE` | content-type → extension mapping (e.g. `"image/png": ".png"`, `"image/svg+xml": ".svg"`) | Used to filename generated ids. Note `image/jpeg` and `image/jpg` both map to `.jpg`. |
 | `_MAX_BYTES` | `8 * 1024 * 1024` (8 MiB) | Hard upload size cap. |

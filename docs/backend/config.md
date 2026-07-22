@@ -119,6 +119,10 @@ def reload_settings() -> Settings:
   `CONFIG_DB=/data/config.db` so SQLite persists. In local dev without
   Docker, the default `data/config.db` works
   from the repo root.
+- **`WALLPAPER_DIR` is not a pydantic field**: the wallpaper storage directory
+  is read directly by `wallpapers.py` via `os.environ.get("WALLPAPER_DIR", ...)`,
+  not through the `Settings` class. It defaults to `/app/wallpapers` in Docker
+  (set in `docker-compose.yml`) or `<project>/backend/wallpapers` locally.
 - **`base_url` adds `/api2/json`** — PVE's REST root path. Every
   `ProxmoxClient` request prepends `base_url`; if you point
   `PROXMOX_API_URL` at `https://pve.local:8006/api2/json/` directly,

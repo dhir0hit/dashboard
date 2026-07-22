@@ -43,6 +43,8 @@ services:
       # MOCK=true → no real Proxmox host required (dry-run for development).
       MOCK: ${MOCK:-true}
       CONFIG_DB: /data/config.db
+      # Explicit wallpaper storage dir (matches the volume mount below).
+      WALLPAPER_DIR: /app/wallpapers
 
       # Host/port — kept internal-only. Frontend proxies to `backend:8000`.
       HOST: 0.0.0.0
