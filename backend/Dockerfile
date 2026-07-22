@@ -1,5 +1,5 @@
 # Backend: FastAPI + uvicorn
-# Listens on 8000. Proxmox config comes from env vars (see .env.example).
+# Listens on 8000. Configuration comes from env vars (see .env.example).
 FROM python:3.12-slim AS runtime
 
 # Curl is useful for the compose healthcheck; nothing else is added to keep

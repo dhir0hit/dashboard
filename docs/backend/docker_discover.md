@@ -1,35 +1,27 @@
 # `backend/app/docker_discover.py`
 
-In-guest Docker container discovery for LXC/QEMU Proxmox guests. Returns a
-list of `Service` objects per `(node, vmid, kind)` tuple.
+Docker container discovery via the Docker socket. Returns a list of
+`Service` objects for all containers on the host.
 
-## Strategy (in priority order)
+## Strategy
 
-The dispatcher `discover_docker_services(s, node, vmid, kind)`:
+The dispatcher `discover_docker_services()` uses a single strategy:
 
-1. **SSH (preferred)** — when `s.ssh_host` is set:
-   - For **LXC** guests, the SSH command is prefixed with
-     `pct exec <vmid> --` so the remote `docker ps` runs inside the guest
-     (PVE's `pct exec` over SSH — no guest-side SSH server needed).
-   - For **QEMU** guests, the `docker ps` runs directly on the SSH host
-     (assumes the VM host IS the Docker host).
-   - SSH failures (auth, connection, timeout) are swallowed — the
-     dispatcher falls through to strategy 2.
-2. **Local Docker** — when SSH isn't configured OR SSH failed:
-   - Checks `shutil.which("docker")` first; if `docker` is not on PATH,
-     falls back to checking for `/var/run/docker.sock` (so the backend
-     can still report "discovered but no containers" if the socket exists
-     but the CLI isn't installed).
-   - Runs `docker ps -a --format ...` as a local subprocess (30s timeout).
-   - On non-zero exit, TimeoutExpired, or FileNotFoundError, returns `[]`.
+**Local Docker socket** — runs `docker ps -a --format ...` against the
+Docker socket mounted at `/var/run/docker.sock`. The backend container
+must have the socket mounted (configured via `DOCKER_SOCK` in `.env`).
 
-There is no separate `pct_exec` strategy — the pct-exec-via-SSH path is
-folded into strategy 1's LXC branch. PVE's REST `/pct exec` endpoint
-(used by `ProxmoxClient.pct_exec`) returns a task UPID, not stdout, so
-it's not useful for `docker ps` discovery here.
+- Checks `shutil.which("docker")` first; if `docker` is not on PATH,
+  falls back to checking for `/var/run/docker.sock` (so the backend
+  can still report "discovered but no containers" if the socket exists
+  but the CLI isn't installed).
+- Runs `docker ps -a --format ...` as a local subprocess (30s timeout).
+- On non-zero exit, TimeoutExpired, or FileNotFoundError, returns `[]`.
 
-Both strategies feed stdout through the shared `_rows_to_services` row
-parser, so the output shape is identical regardless of strategy.
+The function is a thin wrapper: `discover_via_local(node, vmid, kind)`.
+The `node`, `vmid`, and `kind` parameters are accepted for API
+compatibility but are no longer used (the old code supported multiple
+nodes and VM types; now we just enumerate containers on the single host).
 
 ## Constants
 
@@ -51,16 +43,16 @@ tab-delimited so `_parse_ps` can split reliably.
 
 ## Public functions
 
-### `discover_docker_services(s, node, vmid, kind) -> list[Service]`
+### `discover_docker_services() -> list[Service]`
 
-Top-level dispatcher. See "Strategy" above. Returns a list of `Service`
-objects (may be empty if the guest has Docker installed but no containers
-running, or if docker isn't installed).
+Top-level dispatcher. Calls `discover_via_local("docker", "host", "container")`
+and returns the result. The node/vmid/kind args are historical (kept for
+call-site compatibility); they don't affect the output.
 
-### `hostname_to_node(default="pve") -> str`
+### `hostname_to_node(default="docker") -> str`
 
-Returns the local hostname (or `default` on error). Used as a `node`
-fallback in some call paths.
+Returns the local hostname (or `default` on error). Not used in the
+current discovery path but kept for potential future use.
 
 ## Private helpers
 
@@ -107,32 +99,6 @@ so `_parse_ps` can rely on the field order.
 Parses Docker's Labels column (`"key1=val1,key2=val2,..."`) into a dict.
 Empty/missing labels return `{}`.
 
-### `_ssh_client(s: Settings) -> paramiko.SSHClient`
-
-- Creates a `paramiko.SSHClient`, accepts missing host keys
-  (`AutoAddPolicy`), connects with `s.ssh_host`, `s.ssh_user`,
-  `s.ssh_port`, 15s timeout.
-- Auth priority: `ssh_key_file` (if exists) → `ssh_password` →
-  `look_for_keys=True` (agent / default keys).
-
-### `_exec_ssh_command(s, command) -> tuple[int, str, str]`
-
-- Opens a fresh SSH client, runs `command` (60s timeout), reads stdout and
-  stderr fully, returns `(exit_code, stdout, stderr)`.
-- Always closes the client in a `finally`.
-
-### `discover_via_ssh(s, node, vmid, kind) -> list[Service]`
-
-- Early-return `[]` if `s.ssh_host` is unset (defensive — caller also
-  guards).
-- For `kind == LXC`, prefixes the `docker ps` command with
-  `pct exec <vmid> --` so the remote call executes inside the LXC guest.
-- Runs via `_exec_ssh_command`. Non-zero exit OR `not found` text in
-  stderr/stdout → returns `[]` (treats missing docker as a no-error empty
-  result). Auth / connect failures bubble up via exceptions — the
-  dispatcher swallows them.
-- On success: returns `_rows_to_services(stdout, node, vmid, kind)`.
-
 ### `discover_via_local(node, vmid, kind) -> list[Service]`
 
 - If `shutil.which("docker")` is None and `/var/run/docker.sock` doesn't
@@ -143,17 +109,16 @@ Empty/missing labels return `{}`.
 
 ### `_rows_to_services(stdout, node, vmid, kind) -> list[Service]`
 
-The shared output-shaping function — both `discover_via_ssh` and
-`discover_via_local` end here. Walks `_parse_ps(stdout)`, builds a
+The shared output-shaping function. Walks `_parse_ps(stdout)`, builds a
 `Service` per row with:
 
 ```python
-id=f"{node}-{kind.value}-{vmid}-docker-{row.name}"
+id=f"docker-{row.name}"
 ```
 
-This id format is the one mock_data mirrors (`pve-lxc-100-docker-grafana`)
-and is what the frontend's Settings-page "container_id" linker matches
-against.
+This id format is what the frontend's Settings-page "container_id" linker
+matches against. The `node`, `vmid`, and `kind` parameters are accepted
+but ignored (the id is now just `docker-<name>`).
 
 ## Data shapes
 
@@ -171,26 +136,21 @@ Columns from the `docker ps --format` template:
 
 ## Conventions
 
-- **No retries**: a single SSH attempt; on failure the dispatcher falls
-  through to local Docker. Adding retries would compound latency on
-  unreachable guests.
+- **No retries**: a single `subprocess.run` attempt. Adding retries would
+  compound latency on an unreachable Docker daemon.
 - **No caching**: every `/api/services` call re-runs discovery. The
   frontend polls every 10s (`HEALTH_POLL_MS`) — the backend simply runs
-  discovery per request. If your PVE host is slow, cache results with a
+  discovery per request. If your Docker host is slow, cache results with a
   short TTL at the `main.get_services` level.
 - **Image-name matching is best-effort**: `_icon_hint` works for common
   registries and canonical names; exotic image refs default to `"docker"`.
-- **Errors are not propagated**: every strategy catches its own failures
-  and returns `[]`. The caller (`main._gather_real_services` logs
-  per-guest warnings but doesn't aggregate). Discovery can never throw
-  from this module — it can only return a list (possibly empty).
-- **SSH uses paramiko**: not stdlib. Required dependency (already in
-  `backend/requirements.txt`).
-- **Local docker requires either the CLI or the socket**: the local
-  fallback will still try `subprocess.run(...)` even if `docker` isn't on
-  PATH as long as the socket exists — `subprocess.run` returns
-  non-zero/stderr quickly, and we convert to `[]`. This is benign but
-  means the socket can produce noise in the backend log on every request.
+- **Errors are not propagated**: `discover_via_local` catches its own
+  failures and returns `[]`. The caller (`main._gather_real_services`) logs
+  warnings but doesn't aggregate. Discovery can never throw from this module
+  — it can only return a list (possibly empty).
+- **Docker socket required**: the backend container must have
+  `/var/run/docker.sock` mounted (or `DOCKER_SOCK` set to the socket path
+  on the host). Without it, discovery returns `[]`.
 
 ---
 

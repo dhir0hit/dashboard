@@ -198,7 +198,7 @@ particle drifts on `(vx, vy)`, wrapping at the canvas borders.
 ### `Hero({ source, count, loading, refreshing, lastRefresh, onRefresh })`
 
 Top header card. Title "Dashboard". Subtitle shows count + source label
-(`"Mock mode"` for `source === "mock"`, `"Proxmox · <host>"` otherwise).
+(`"Mock mode"` for `source === "mock"`, `"Docker · <host>"` otherwise).
 Refresh button (icon spins while `refreshing`). Link to `/settings`
 labeled "Manage tiles".
 

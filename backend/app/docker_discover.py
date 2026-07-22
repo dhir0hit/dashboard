@@ -1,28 +1,16 @@
-"""Docker container discovery for LXC guests and QEMU VMs.
+"""Docker container discovery via the local Docker socket.
 
-Strategy (in order):
-1. SSH into the host/guest and run `docker ps --format ...`. Works for VMs
-   with an SSH server, and for LXC if SSH_HOST points at the PVE host (in
-   which case we run `pct exec <vmid> -- docker ...` remotely).
-2. Local fallback: if running inside the container/VM itself, use the local
-   docker socket via docker CLI or /var/run/docker.sock.
-
-The output is shaped into Service objects. Each docker container becomes one
-Service. icon_hint is inferred from the image name (sonarr, radarr, lidarr,
-postgres, redis, ...).
+Uses the Docker CLI or falls back to the Unix socket to list all containers
+on the host. The output is shaped into Service objects. Each docker container
+becomes one Service. icon_hint is inferred from the image name (sonarr, radarr,
+lidarr, postgres, redis, ...).
 """
 from __future__ import annotations
 
-import json
-import shlex
 import shutil
-import socket
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-
-import paramiko
 
 from .config import Settings
 from .schemas import ContainerKind, PortMapping, Service, ServiceStatus
@@ -100,7 +88,7 @@ def _status_from(status_str: str) -> ServiceStatus:
     return ServiceStatus.UNKNOWN
 
 
-# --- exec backends ---------------------------------------------------------
+# --- docker ps command -----------------------------------------------------
 _DOCKER_PS_FORMAT = (
     "{{.Name}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\t{{.Labels}}"
 )
@@ -140,54 +128,10 @@ def _labels_to_dict(labels: str) -> dict[str, str]:
     return out
 
 
-# --- SSH implementation ----------------------------------------------------
-def _ssh_client(s: Settings) -> paramiko.SSHClient:
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    kwargs = {"port": s.ssh_port, "timeout": 15}
-    if s.ssh_key_file and Path(s.ssh_key_file).exists():
-        kwargs["key_filename"] = s.ssh_key_file
-    elif s.ssh_password:
-        kwargs["password"] = s.ssh_password
-    else:
-        kwargs["look_for_keys"] = True
-    client.connect(s.ssh_host, s.ssh_user, **kwargs)
-    return client
-
-
-def _exec_ssh_command(s: Settings, command: str) -> tuple[int, str, str]:
-    """Run `command` over SSH. Returns (exit_code, stdout, stderr)."""
-    client = _ssh_client(s)
-    try:
-        stdin, stdout, stderr = client.exec_command(command, timeout=60)
-        code = stdout.channel.recv_exit_status()
-        return code, stdout.read().decode("utf-8", "replace"), stderr.read().decode("utf-8", "replace")
-    finally:
-        client.close()
-
-
-def discover_via_ssh(s: Settings, node: str, vmid: int, kind: ContainerKind) -> list[Service]:
-    """Run docker ps on the gamit, embedding vmid/kind into Service IDs."""
-    if not s.ssh_host:
-        return []
-    cmd = _build_docker_ps_cmd()
-    # For LXC, prefer the PVE host using pct exec so we don't need guest SSH.
-    if kind == ContainerKind.LXC:
-        cmd = f"pct exec {vmid} -- " + cmd
-    code, stdout, stderr = _exec_ssh_command(s, cmd)
-    if code != 0:
-        # docker not installed — not an error, just no services.
-        if "not found" in stderr.lower() or "not found" in stdout.lower():
-            return []
-        # auth / connect failures bubble up
-        return []
-    return _rows_to_services(stdout, node, vmid, kind)
-
-
-# --- Local implementation (running inside the guest itself) ---------------
-def discover_via_local(node: str, vmid: int, kind: ContainerKind) -> list[Service]:
+# --- Local discovery (running on the host with Docker socket) --------------
+def discover_docker_services_local(s: Settings) -> list[Service]:
+    """Discover Docker containers on the local host via `docker ps`."""
     if not shutil.which("docker"):
-        # try a raw socket query as a graceful no-op path
         if not Path("/var/run/docker.sock").exists():
             return []
     cmd = _build_docker_ps_cmd()
@@ -199,22 +143,17 @@ def discover_via_local(node: str, vmid: int, kind: ContainerKind) -> list[Servic
         return []
     if r.returncode != 0:
         return []
-    return _rows_to_services(r.stdout, node, vmid, kind)
+    return _rows_to_services(r.stdout)
 
 
-# --- shared row → Service --------------------------------------------------
-def _rows_to_services(
-    stdout: str, node: str, vmid: int, kind: ContainerKind
-) -> list[Service]:
+def _rows_to_services(stdout: str) -> list[Service]:
     services: list[Service] = []
     for row in _parse_ps(stdout):
         status = _status_from(row.status)
         svc = Service(
-            id=f"{node}-{kind.value}-{vmid}-docker-{row.name}",
+            id=f"docker-{row.name}",
             name=row.name,
-            node=node,
-            vmid=vmid,
-            kind=kind,
+            kind=ContainerKind.CONTAINER,
             status=status,
             image=row.image,
             ports=_parse_ports(row.ports),
@@ -223,25 +162,3 @@ def _rows_to_services(
         )
         services.append(svc)
     return services
-
-
-# --- public dispatcher -----------------------------------------------------
-def discover_docker_services(
-    s: Settings, node: str, vmid: int, kind: ContainerKind
-) -> list[Service]:
-    """Try SSH first (covers VMs and LXC-via-pct), fall back to local docker."""
-    if s.ssh_host:
-        try:
-            return discover_via_ssh(s, node, vmid, kind)
-        except Exception:
-            # fall through to local
-            pass
-    return discover_via_local(node, vmid, kind)
-
-
-def hostname_to_node(default: str = "pve") -> str:
-    try:
-        h = socket.gethostname()
-        return h if h else default
-    except Exception:
-        return default

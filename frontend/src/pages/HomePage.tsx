@@ -452,7 +452,7 @@ function Hero({
   lastRefresh: number | null;
   onRefresh: () => void;
 }) {
-  const sourceLabel = source === "mock" ? "Mock mode" : source ? `Proxmox · ${source}` : "—";
+  const sourceLabel = source === "mock" ? "Mock mode" : source ? `Docker · ${source}` : "—";
   return (
     <header className="glass flex flex-wrap items-end justify-between gap-3 p-5">
       <div>
@@ -716,6 +716,8 @@ function TileCard({
   const icon = entry.icon?.trim() || iconForHint(discovered?.icon_hint);
   const iconUrl = entry.icon_url?.trim();
   const [open, setOpen] = useState(false);
+  const [tileInfo, setTileInfo] = useState<any>(null);
+  const [infoError, setInfoError] = useState<string | null>(null);
   const statusLabel = labelForStatus(status);
   const primaryPort = discovered?.ports?.[0];
   const link = entry.url?.trim() || (discovered && primaryPort ? makeBestGuessUrl(discovered) : "");
@@ -724,6 +726,25 @@ function TileCard({
   // Only show the Login button when the widget actually needs credentials.
   // auth_schema "none" means the tile is just a link — no auto-login.
   const needsLogin = hasWidget && widgetDef && widgetDef.auth_schema !== "none";
+
+  // Fetch live service info (ping / Jellyfin / Radarr / qBittorrent) when hovered.
+  useEffect(() => {
+    if (!open || !link) return;
+    let cancelled = false;
+    setTileInfo(null);
+    setInfoError(null);
+    api
+      .getTileInfo(entry.id)
+      .then((info) => {
+        if (!cancelled) setTileInfo(info);
+      })
+      .catch((err) => {
+        if (!cancelled) setInfoError(err?.message || "failed");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, link, entry.id]);
   const content = (
     <>
       <div className="flex items-start justify-between gap-2">
@@ -799,6 +820,95 @@ function TileCard({
             </div>
           )}
         </div>
+      )}
+      {open && tileInfo && (
+        <div className="mt-2 animate-fade-in rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] text-slate-300">
+          {tileInfo.type === "jellyfin" && (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Server</span>
+                <span>{tileInfo.server_name || "Jellyfin"}</span>
+              </div>
+              {tileInfo.version && (
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="text-slate-500">Version</span>
+                  <span>{tileInfo.version}</span>
+                </div>
+              )}
+              {tileInfo.active_connections != null && (
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="text-slate-500">Active</span>
+                  <span>{tileInfo.active_connections} connections</span>
+                </div>
+              )}
+            </>
+          )}
+          {tileInfo.type === "radarr" && (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Version</span>
+                <span>{tileInfo.version || "—"}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-slate-500">Movies</span>
+                <span>{tileInfo.movie_count ?? 0}</span>
+              </div>
+              {tileInfo.wanted_count != null && (
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="text-slate-500">Wanted</span>
+                  <span>{tileInfo.wanted_count}</span>
+                </div>
+              )}
+            </>
+          )}
+          {tileInfo.type === "qbittorrent" && (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Version</span>
+                <span>{tileInfo.qbittorrent_version || "—"}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-slate-500">Downloading</span>
+                <span>{tileInfo.downloading ?? 0}</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-slate-500">Uploading</span>
+                <span>{tileInfo.uploading ?? 0}</span>
+              </div>
+              {tileInfo.total_downloaded && (
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="text-slate-500">Downloaded</span>
+                  <span>{formatBytes(tileInfo.total_downloaded)}</span>
+                </div>
+              )}
+            </>
+          )}
+          {tileInfo.type === "ping" && (
+            <>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Status</span>
+                <span className={tileInfo.online ? "text-emerald-400" : "text-rose-400"}>
+                  {tileInfo.online ? "Online" : "Offline"}
+                </span>
+              </div>
+              {tileInfo.status_code && (
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="text-slate-500">HTTP</span>
+                  <span>{tileInfo.status_code}</span>
+                </div>
+              )}
+              {tileInfo.response_time_ms != null && (
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="text-slate-500">Response</span>
+                  <span>{tileInfo.response_time_ms}ms</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {open && infoError && (
+        <div className="mt-2 text-[11px] text-slate-500">{infoError}</div>
       )}
     </>
   );
@@ -890,6 +1000,18 @@ function formatUptime(seconds: number): string {
   if (h) return `${h}h ${m}m`;
   if (m) return `${m}m ${s}s`;
   return `${s}s`;
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes < 0) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let val = bytes;
+  let unit = 0;
+  while (val >= 1024 && unit < units.length - 1) {
+    val /= 1024;
+    unit++;
+  }
+  return `${val.toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
 }
 
 const ICON_HINT_TO_EMOJI: Record<string, string> = {

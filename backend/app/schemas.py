@@ -15,8 +15,7 @@ class ServiceStatus(str, Enum):
 
 
 class ContainerKind(str, Enum):
-    LXC = "lxc"
-    QEMU = "qemu"
+    CONTAINER = "container"
 
 
 class PortMapping(BaseModel):
@@ -28,13 +27,11 @@ class PortMapping(BaseModel):
 
 
 class Service(BaseModel):
-    """A single discoverable service (docker container on a PVE guest)."""
+    """A single discoverable service (Docker container on the host)."""
 
-    id: str = Field(..., description="Stable unique id, e.g. <node>-<kind>-<vmid>-docker-<name>")
+    id: str = Field(..., description="Stable unique id, e.g. docker-<name>")
     name: str
-    node: str
-    vmid: int
-    kind: ContainerKind
+    kind: ContainerKind = ContainerKind.CONTAINER
     status: ServiceStatus = ServiceStatus.UNKNOWN
     image: str = ""
     ports: list[PortMapping] = Field(default_factory=list)
@@ -53,7 +50,7 @@ class ServiceHealth(BaseModel):
 
 class ServicesResponse(BaseModel):
     services: list[Service]
-    source: str = "proxmox"  # or "mock"
+    source: str = "docker"  # or "mock"
     count: int = 0
 
 
@@ -112,7 +109,7 @@ class ThemeDefinition(BaseModel):
 class ServiceEntry(BaseModel):
     """A dashboard tile the user added through the Settings page.
 
-    `id` is the tile id (not the underlying Proxmox service id). `container_id`
+    `id` is the tile id (not the underlying Docker service id). `container_id`
     optionally links the tile to a discovered service so /api/services health
     can be overlaid on the rendered card.
 
@@ -133,7 +130,7 @@ class ServiceEntry(BaseModel):
     # --- Widget integration -------------------------------------------------
     widget_type: Optional[str] = None  # one of WIDGET_REGISTRY keys, or None
     api_url: Optional[str] = None  # base URL of the service API/web UI
-    api_key: Optional[str] = None  # bearer/token auth (Grafana, Proxmox, Portainer)
+    api_key: Optional[str] = None  # bearer/token auth (Grafana, Portainer)
     username: Optional[str] = None  # form-login auth (qBittorrent, Sonarr, etc.)
     password: Optional[str] = None  # paired with username
 

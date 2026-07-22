@@ -300,4 +300,14 @@ export const api = {
     const res = await fetch(`${API_BASE}/api/calendar/hermes`);
     return jsonOrThrow(res);
   },
+
+  async pingUrl(url: string): Promise<{ online: boolean; status_code: number | null; response_time_ms: number | null; error: string | null }> {
+    const res = await fetch(`${API_BASE}/api/ping?url=${encodeURIComponent(url)}`);
+    return jsonOrThrow(res);
+  },
+
+  async getTileInfo(serviceId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/api/tiles/${serviceId}/info`);
+    return jsonOrThrow(res);
+  },
 };
