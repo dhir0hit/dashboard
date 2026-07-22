@@ -22,6 +22,9 @@ from fastapi import UploadFile
 # grouped under the backend directory. Resolved once at import time.
 _WALLPAPER_DIR = Path(__file__).resolve().parent.parent / "wallpapers"
 
+# Built-in wallpapers ship with the app in a static directory.
+_BUILTIN_WALLPAPER_DIR = Path(__file__).resolve().parent / "static" / "wallpapers"
+
 # Allowed content types. Anything else is rejected with a ValueError that the
 # FastAPI layer turns into a 400.
 _ALLOWED_CONTENT_TYPES = {
@@ -114,9 +117,23 @@ async def save_upload(upload: UploadFile) -> tuple[str, str, str]:
 
 
 def list_all() -> list[dict[str, Any]]:
-    """Return every stored wallpaper as a list of dicts shaped for WallpaperItem."""
+    """Return every stored wallpaper as a list of dicts shaped for WallpaperItem.
+
+    Includes both user-uploaded wallpapers (from _WALLPAPER_DIR) and built-in
+    wallpapers (from _BUILTIN_WALLPAPER_DIR). Built-ins are listed first so
+    they appear at the top of the picker.
+    """
     out: list[dict[str, Any]] = []
-    d = _wallpaper_dir()
+
+    # Built-in wallpapers first — these ship with the app and are always available.
+    if _BUILTIN_WALLPAPER_DIR.exists():
+        for p in sorted(_BUILTIN_WALLPAPER_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if p.is_file() and _SAFE_NAME.match(p.name):
+                # Prefix built-in IDs with "builtin:" so the frontend can distinguish them.
+                out.append({"id": f"builtin:{p.name}", "url": f"/wallpapers/{p.name}", "name": p.name})
+
+    # User-uploaded wallpapers next.
+    d = _WALLPAPER_DIR
     if not d.exists():
         return out
     for p in sorted(d.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
@@ -130,6 +147,8 @@ def respond(filename: str):
 
     The caller (main.py) wraps this in a 404 handler. The filename must match
     ``_SAFE_NAME`` so path traversal via .. is impossible.
+
+    Checks user-uploaded wallpapers first, then falls back to built-in wallpapers.
     """
     from fastapi.responses import FileResponse
 
@@ -137,7 +156,15 @@ def respond(filename: str):
         # Sanitize — never let a bare path through. Treat as not-found so the
         # 404 handler responds cleanly instead of leaking validation internals.
         raise FileNotFoundError(filename)
+
+    # Check user-uploaded wallpapers first.
     p = _wallpaper_dir() / filename
-    if not p.is_file():
-        raise FileNotFoundError(filename)
-    return FileResponse(p)
+    if p.is_file():
+        return FileResponse(p)
+
+    # Fall back to built-in wallpapers.
+    p = _BUILTIN_WALLPAPER_DIR / filename
+    if p.is_file():
+        return FileResponse(p)
+
+    raise FileNotFoundError(filename)
