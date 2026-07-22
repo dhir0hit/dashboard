@@ -65,6 +65,7 @@ export interface ServiceEntry {
   api_key?: string;     // bearer / token auth
   username?: string;    // form-login / basic-auth username
   password?: string;    // paired with username
+  category?: string;    // user-assigned category for grouping tiles
 }
 
 export type WidgetAuthSchema = "none" | "api_key" | "basic" | "form";

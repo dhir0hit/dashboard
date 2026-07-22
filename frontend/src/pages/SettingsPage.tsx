@@ -126,6 +126,21 @@ function TilesSection({
     [services]
   );
 
+  // Group tiles by category (uncategorized go to "Uncategorized", shown last).
+  const groupedByCategory = useMemo(() => {
+    const groups = new Map<string, typeof sorted>();
+    for (const s of sorted) {
+      const cat = s.category?.trim() || "Uncategorized";
+      if (!groups.has(cat)) groups.set(cat, []);
+      groups.get(cat)!.push(s);
+    }
+    return [...groups.entries()].sort((a, b) => {
+      if (a[0] === "Uncategorized") return 1;
+      if (b[0] === "Uncategorized") return -1;
+      return a[0].localeCompare(b[0]);
+    }).map(([category, items]) => ({ category, items }));
+  }, [sorted]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -184,21 +199,36 @@ function TilesSection({
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
         >
-          <ul className="mt-4 space-y-2">
-            <SortableContext
-              items={sorted.map((s) => s.id)}
-              strategy={verticalListSortingStrategy}
-            >
-              {sorted.map((s) => (
-                <SortableTile
-                  key={s.id}
-                  service={s}
-                  onUpdate={(patch) => onUpdate(s.id, patch)}
-                  onDelete={() => onDelete(s.id)}
-                />
+          <SortableContext
+            items={sorted.map((s) => s.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <div className="mt-4 space-y-4">
+              {groupedByCategory.map(({ category, items }) => (
+                <div key={category}>
+                  <div className="mb-2 flex items-center gap-2">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                      {category}
+                    </h3>
+                    <span className="chip border border-white/10 bg-white/5 text-slate-300">
+                      {items.length}
+                    </span>
+                    <div className="ml-2 h-px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
+                  </div>
+                  <ul className="space-y-2">
+                    {items.map((s) => (
+                      <SortableTile
+                        key={s.id}
+                        service={s}
+                        onUpdate={(patch) => onUpdate(s.id, patch)}
+                        onDelete={() => onDelete(s.id)}
+                      />
+                    ))}
+                  </ul>
+                </div>
               ))}
-            </SortableContext>
-          </ul>
+            </div>
+          </SortableContext>
           <DragOverlay>
             {activeService ? <TileRow service={activeService} dragging /> : null}
           </DragOverlay>
@@ -293,6 +323,11 @@ function TileRow({
           {service.url || "—"}
         </div>
       </div>
+      {service.category && (
+        <span className="chip shrink-0 border border-violet-400/30 bg-violet-400/10 text-violet-200">
+          {service.category}
+        </span>
+      )}
       {service.container_id && (
         <code className="hidden rounded bg-black/40 px-1.5 py-0.5 text-[10px] text-slate-400 sm:block">
           {service.container_id}
@@ -337,6 +372,7 @@ interface FormState {
   api_key: string;
   username: string;
   password: string;
+  category: string;
 }
 
 function ServiceForm({
@@ -366,6 +402,7 @@ function ServiceForm({
     api_key: initial?.api_key ?? "",
     username: initial?.username ?? "",
     password: initial?.password ?? "",
+    category: initial?.category ?? "",
   });
   const [submitting, setSubmitting] = useState(false);
 
@@ -388,6 +425,7 @@ function ServiceForm({
         api_key: authSchema === "api_key" ? (form.api_key || undefined) : undefined,
         username: (authSchema === "basic" || authSchema === "form") ? (form.username.trim() || undefined) : undefined,
         password: (authSchema === "basic" || authSchema === "form") ? (form.password || undefined) : undefined,
+        category: form.category.trim() || undefined,
       });
     } finally {
       setSubmitting(false);
@@ -460,6 +498,29 @@ function ServiceForm({
         />
         <p className="mt-1 text-[11px] text-slate-500">
           Direct link to a .svg / .png / .jpg icon. Takes priority over the emoji above.
+        </p>
+      </div>
+      <div>
+        <label className="label">Category</label>
+        <input
+          className="input"
+          value={form.category}
+          onChange={(e) => setForm({ ...form, category: e.target.value })}
+          placeholder="Media, NAS, Monitoring…"
+          list="tile-categories"
+        />
+        <datalist id="tile-categories">
+          <option value="Media" />
+          <option value="NAS" />
+          <option value="Monitoring" />
+          <option value="Downloads" />
+          <option value="Network" />
+          <option value="Development" />
+          <option value="Home Automation" />
+          <option value="Other" />
+        </datalist>
+        <p className="mt-1 text-[11px] text-slate-500">
+          Group tiles by category on the dashboard. Free-form text.
         </p>
       </div>
 
@@ -776,22 +837,56 @@ function BackgroundSection() {
           )}
 
           {wallpapers.length > 0 && (
-            <div className="mt-4 grid grid-cols-3 gap-2 sm:grid-cols-5">
-              {wallpapers.map((w) => (
-                <button
-                  key={w.id}
-                  type="button"
-                  onClick={() => void setBackground({ wallpaper_url: w.url })}
-                  className={clsx(
-                    "overflow-hidden rounded-lg border transition",
-                    bg.wallpaper_url === w.url
-                      ? "border-cyan-400 ring-2 ring-cyan-400/30"
-                      : "border-white/10 hover:border-white/30"
-                  )}
-                >
-                  <img src={w.url} alt={w.name} className="h-16 w-full object-cover" />
-                </button>
-              ))}
+            <div className="mt-4">
+              {/* Default wallpapers section */}
+              {wallpapers.filter((w) => w.id.startsWith("default-")).length > 0 && (
+                <>
+                  <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">Built-in</div>
+                  <div className="mb-3 grid grid-cols-3 gap-2 sm:grid-cols-5">
+                    {wallpapers.filter((w) => w.id.startsWith("default-")).map((w) => (
+                      <button
+                        key={w.id}
+                        type="button"
+                        onClick={() => void setBackground({ wallpaper_url: w.url })}
+                        className={clsx(
+                          "group relative overflow-hidden rounded-lg border transition",
+                          bg.wallpaper_url === w.url
+                            ? "border-cyan-400 ring-2 ring-cyan-400/30"
+                            : "border-white/10 hover:border-white/30"
+                        )}
+                      >
+                        <img src={w.url} alt={w.name} className="h-16 w-full object-cover" />
+                        <span className="absolute bottom-0 left-0 right-0 truncate bg-black/60 px-1 py-0.5 text-[9px] text-slate-200 opacity-0 transition group-hover:opacity-100">
+                          {w.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {/* Uploaded wallpapers section */}
+              {wallpapers.filter((w) => !w.id.startsWith("default-")).length > 0 && (
+                <>
+                  <div className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">Uploaded</div>
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+                    {wallpapers.filter((w) => !w.id.startsWith("default-")).map((w) => (
+                      <button
+                        key={w.id}
+                        type="button"
+                        onClick={() => void setBackground({ wallpaper_url: w.url })}
+                        className={clsx(
+                          "overflow-hidden rounded-lg border transition",
+                          bg.wallpaper_url === w.url
+                            ? "border-cyan-400 ring-2 ring-cyan-400/30"
+                            : "border-white/10 hover:border-white/30"
+                        )}
+                      >
+                        <img src={w.url} alt={w.name} className="h-16 w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
 

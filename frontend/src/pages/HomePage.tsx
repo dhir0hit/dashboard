@@ -116,13 +116,13 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
     });
   }, [config.services, byContainerId, healthById]);
 
-  // --- group tiles by guest (vmid:node:kind) or "Unlinked" --------------
+  // --- group tiles by user-assigned category, falling back to discovered host ---
   const groups = useMemo(() => {
     const filtered = tiles.filter((t) => {
       if (filter !== "all" && t.effectiveStatus !== filter) return false;
       if (query.trim()) {
         const q = query.toLowerCase();
-        const hay = [t.entry.name, t.entry.url ?? "", t.entry.container_id ?? "", t.discovered?.image ?? ""]
+        const hay = [t.entry.name, t.entry.url ?? "", t.entry.container_id ?? "", t.entry.category ?? "", t.discovered?.image ?? ""]
           .join(" ")
           .toLowerCase();
         if (!hay.includes(q)) return false;
@@ -131,12 +131,19 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
     });
     const buckets = new Map<string, Tile[]>();
     for (const t of filtered) {
-      const key = t.discovered
-        ? `${t.discovered.node} · ${t.discovered.kind.toUpperCase()} ${t.discovered.vmid}`
-        : "Unlinked";
+      // Use user-assigned category first, then discovered host, then "Unlinked"
+      const key = t.entry.category?.trim()
+        || (t.discovered
+          ? `${t.discovered.node} · ${t.discovered.kind.toUpperCase()} ${t.discovered.vmid}`
+          : "Unlinked");
       buckets.set(key, [...(buckets.get(key) ?? []), t]);
     }
-    return [...buckets.entries()];
+    // Sort: Uncategorized/Unlinked goes last
+    return [...buckets.entries()].sort((a, b) => {
+      if (a[0] === "Unlinked" && b[0] !== "Unlinked") return 1;
+      if (b[0] === "Unlinked" && a[0] !== "Unlinked") return -1;
+      return a[0].localeCompare(b[0]);
+    });
   }, [tiles, filter, query]);
 
   // --- unlinked discovered services ---------------------------------------
@@ -642,61 +649,223 @@ function TileGrid({
   );
 }
 
-// Login button for widget-backed tiles. Calls /api/tiles/{id}/auth to
-// perform server-side login, plants any returned cookies on the browser,
-// then opens the redirect URL in a new tab. Lives INSIDE the TileCard so
-// its click handler can stopPropagation before the tile's full-card link
-// catches the event.
+// Login button + modal for widget-backed tiles. Opens a dialog showing
+// the stored credentials (username/password or API key) pre-filled and
+// editable. On submit, calls /api/tiles/{id}/auth to perform server-side
+// login, plants any returned cookies, then opens the redirect URL.
+// Lives INSIDE the TileCard so its click handler can stopPropagation.
 function TileLoginButton({ entry }: { entry: ServiceEntry }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [showModal, setShowModal] = useState(false);
 
-  async function handleLogin(e: React.MouseEvent) {
+  function handleClick(e: React.MouseEvent) {
     // Critical: the parent TileCard is wrapped in an <a> that would otherwise
     // catch the click. Without stopPropagation the click just opens the link.
     e.preventDefault();
     e.stopPropagation();
-    setLoading(true);
     setErr(null);
+    setShowModal(true);
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={handleClick}
+        className="btn-ghost relative z-10 px-2 py-1 text-[11px]"
+        aria-label={`Log in to ${entry.name}`}
+        title={`Auto-login to ${entry.name}`}
+      >
+        <LogIn className="h-3 w-3" />
+        <span>Login</span>
+      </button>
+      {showModal && (
+        <LoginModal
+          entry={entry}
+          onClose={() => setShowModal(false)}
+          onLoading={setLoading}
+          onError={setErr}
+          loading={loading}
+          err={err}
+        />
+      )}
+    </>
+  );
+}
+
+function LoginModal({
+  entry,
+  onClose,
+  onLoading,
+  onError,
+  loading,
+  err,
+}: {
+  entry: ServiceEntry;
+  onClose: () => void;
+  onLoading: (v: boolean) => void;
+  onError: (e: string | null) => void;
+  loading: boolean;
+  err: string | null;
+}) {
+  // Pre-fill from the tile config; user can override before submitting.
+  const [username, setUsername] = useState(entry.username ?? "");
+  const [password, setPassword] = useState(entry.password ?? "");
+  const [apiKey, setApiKey] = useState(entry.api_key ?? "");
+  // Determine what fields to show based on the widget type
+  const needsBasic = !!(entry.widget_type && !entry.api_key);
+  const hasApiKey = !!entry.api_key;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    onLoading(true);
+    onError(null);
     try {
+      // If credentials changed, update the tile first, then login.
+      const patch: Partial<ServiceEntry> = {};
+      if (username !== (entry.username ?? "")) patch.username = username || undefined;
+      if (password !== (entry.password ?? "")) patch.password = password || undefined;
+      if (apiKey !== (entry.api_key ?? "")) patch.api_key = apiKey || undefined;
+
+      if (Object.keys(patch).length > 0) {
+        await api.updateService(entry.id, { ...entry, ...patch });
+      }
+
+      // Now perform the login
       const out = await api.tileLogin(entry.id);
       if (out.cookies?.length) {
-        // Set-Cookie comes back as `name=val; Path=/; HttpOnly; SameSite=Lax`.
-        // browsers ignore Set-Cookie attributes set via document.cookie for
-        // the HttpOnly flag - they take the cookie as plain strings.
         for (const c of out.cookies) {
-          // Strip attributes after the first `;` so document.cookie accepts it.
           const crumb = c.split(";", 1)[0];
           document.cookie = `${crumb}; path=/`;
         }
       }
+      // Open the service URL in a new tab
       window.open(out.redirect_url, "_blank", "noopener,noreferrer");
+      onClose();
     } catch (e) {
-      setErr((e as Error).message || "Login failed");
+      onError((e as Error).message || "Login failed");
     } finally {
-      setLoading(false);
+      onLoading(false);
     }
   }
 
+  // Close on backdrop click
+  function onBackdrop(e: React.MouseEvent) {
+    if (e.target === e.currentTarget) onClose();
+  }
+
   return (
-    <button
-      type="button"
-      onClick={handleLogin}
-      disabled={loading}
-      className="btn-ghost relative z-10 px-2 py-1 text-[11px]"
-      aria-label={`Log in to ${entry.name}`}
-      title={err ?? `Auto-login to ${entry.name}`}
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onClick={onBackdrop}
     >
-      {loading ? (
-        <Loader2 className="h-3 w-3 animate-spin" />
-      ) : (
-        <LogIn className="h-3 w-3" />
-      )}
-      <span>Login</span>
-      {err && (
-        <span className="ml-1 text-rose-300" title={err}>!</span>
-      )}
-    </button>
+      <form
+        onSubmit={handleSubmit}
+        className="glass w-full max-w-md space-y-4 p-6 animate-slide-up"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-white">Login to {entry.name}</h3>
+            <p className="text-xs text-slate-400">
+              {entry.widget_type && (
+                <span className="chip border border-cyan-400/30 bg-cyan-400/10 text-cyan-200">
+                  {entry.widget_type}
+                </span>
+              )}
+              {" "}Credentials are pre-filled from the tile config.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="btn-ghost px-2 py-1"
+            aria-label="Close"
+          >
+            <XCircle className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* API URL display */}
+        <div>
+          <label className="label">Service URL</label>
+          <input
+            className="input"
+            value={entry.api_url || entry.url || ""}
+            readOnly
+          />
+        </div>
+
+        {/* Username + Password (for basic/form auth) */}
+        {(needsBasic || (!hasApiKey && username)) && (
+          <>
+            <div>
+              <label className="label">Username</label>
+              <input
+                className="input"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="admin"
+                autoComplete="off"
+                autoFocus
+              />
+            </div>
+            <div>
+              <label className="label">Password</label>
+              <input
+                type="password"
+                className="input"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="current-password"
+              />
+            </div>
+          </>
+        )}
+
+        {/* API key (for api_key auth) */}
+        {hasApiKey && (
+          <div>
+            <label className="label">API Key</label>
+            <input
+              type="password"
+              className="input font-mono"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="abcd1234…"
+              autoComplete="off"
+              autoFocus
+            />
+          </div>
+        )}
+
+        {/* No credentials needed message */}
+        {!needsBasic && !hasApiKey && (
+          <p className="text-sm text-slate-400">
+            This service does not require credentials. Click "Open" to go directly.
+          </p>
+        )}
+
+        {err && (
+          <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-950/40 p-3 text-sm text-rose-200">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span className="break-all">{err}</span>
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" onClick={onClose} className="btn-ghost">
+            Cancel
+          </button>
+          <button type="submit" disabled={loading} className="btn-primary">
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+            {loading ? "Logging in…" : "Login & Open"}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 

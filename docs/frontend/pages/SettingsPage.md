@@ -152,3 +152,38 @@ Every mutation goes through the `useSettings` store:
 ---
 
 *created by [@dhir0hit](https://github.com/dhir0hit) using [Hermes Agent](https://hermes-agent.nousresearch.com)*
+
+## Category grouping
+
+Tiles can be assigned a free-form **Category** (e.g. "Media", "NAS",
+"Monitoring"). The Settings page groups tiles by category in the sortable
+list, and the HomePage groups tiles by category in the tile grid (falling
+back to the discovered Proxmox host when no category is set).
+
+Preset categories are offered via an `<datalist>` autocomplete: Media, NAS,
+Monitoring, Downloads, Network, Development, Home Automation, Other. Users
+can also type any custom category.
+
+## Default wallpapers
+
+The backend ships with 6 bundled gradient wallpapers (SVG):
+- Default Aurora, Default Midnight, Default Sunset, Default Forest,
+  Default Ocean, Default Nebula
+
+These are stored in `backend/app/static/wallpapers/` and served alongside
+user-uploaded wallpapers. The Settings → Background → Wallpaper picker
+shows them in two sections: **Built-in** and **Uploaded**.
+
+## Login modal (HomePage)
+
+The Login button on tiles with widget auth now opens a **modal dialog** instead
+of immediately calling the API. The modal shows:
+- The service URL (read-only)
+- Pre-filled username/password fields (for basic/form auth widgets)
+- Pre-filled API key field (for api_key auth widgets)
+- User can edit credentials before submitting
+
+On submit, if credentials changed, the tile is updated via `PUT /api/config/services/{id}`.
+Then `POST /api/tiles/{id}/auth` is called to perform server-side login.
+Cookies from the response are planted via `document.cookie`, and the service
+URL opens in a new tab.

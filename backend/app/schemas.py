@@ -136,6 +136,7 @@ class ServiceEntry(BaseModel):
     api_key: Optional[str] = None  # bearer/token auth (Grafana, Proxmox, Portainer)
     username: Optional[str] = None  # form-login auth (qBittorrent, Sonarr, etc.)
     password: Optional[str] = None  # paired with username
+    category: Optional[str] = None  # user-assigned category for grouping tiles
 
 
 class BackgroundSettings(BaseModel):

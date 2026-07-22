@@ -31,6 +31,23 @@ Docker, `<project>/backend/wallpapers` locally) and are served via FastAPI's
 - Raises `ValueError("unsupported wallpaper content type: ...")` if
   neither path matches. The route handler maps this to HTTP 400.
 
+## Default wallpapers
+
+Six gradient SVG wallpapers are bundled with the app in
+`backend/app/static/wallpapers/`. These are always available (even before any
+user upload) and appear first in the wallpaper picker:
+
+- `default-aurora.svg` — Aurora (cyan → purple → pink)
+- `default-midnight.svg` — Midnight (dark navy → indigo)
+- `default-sunset.svg` — Sunset (orange → pink → indigo)
+- `default-forest.svg` — Forest (dark green → emerald)
+- `default-ocean.svg` — Ocean (dark cyan → teal)
+- `default-nebula.svg` — Nebula (violet radial → dark)
+
+The `respond()` function checks both the user-uploaded directory and the
+static defaults directory. `list_all()` returns defaults first with display
+names, then user uploads sorted by mtime.
+
 ## Public functions
 
 ### `save_upload(upload: UploadFile) -> tuple[str, str, str]` (async)

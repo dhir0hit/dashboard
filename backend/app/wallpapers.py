@@ -27,6 +27,9 @@ _WALLPAPER_DIR = Path(
     os.environ.get("WALLPAPER_DIR", Path(__file__).resolve().parent.parent / "wallpapers")
 )
 
+# Bundled default wallpapers (shipped with the app, not user-uploadable).
+_STATIC_WALLPAPER_DIR = Path(__file__).resolve().parent / "static" / "wallpapers"
+
 # Allowed content types. Anything else is rejected with a ValueError that the
 # FastAPI layer turns into a 400.
 _ALLOWED_CONTENT_TYPES = {
@@ -119,14 +122,27 @@ async def save_upload(upload: UploadFile) -> tuple[str, str, str]:
 
 
 def list_all() -> list[dict[str, Any]]:
-    """Return every stored wallpaper as a list of dicts shaped for WallpaperItem."""
+    """Return every wallpaper (defaults + user-uploaded) for the picker."""
     out: list[dict[str, Any]] = []
+
+    # Default wallpapers first (bundled with the app)
+    if _STATIC_WALLPAPER_DIR.exists():
+        for p in sorted(_STATIC_WALLPAPER_DIR.iterdir()):
+            if p.is_file() and _SAFE_NAME.match(p.name):
+                display_name = p.stem.replace("-", " ").title()
+                out.append({
+                    "id": p.name,
+                    "url": f"/wallpapers/{p.name}",
+                    "name": display_name,
+                })
+
+    # User-uploaded wallpapers after (most recent first)
     d = _wallpaper_dir()
-    if not d.exists():
-        return out
-    for p in sorted(d.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-        if p.is_file() and _SAFE_NAME.match(p.name):
-            out.append({"id": p.name, "url": f"/wallpapers/{p.name}", "name": p.name})
+    if d.exists():
+        for p in sorted(d.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+            if p.is_file() and _SAFE_NAME.match(p.name):
+                out.append({"id": p.name, "url": f"/wallpapers/{p.name}", "name": p.name})
+
     return out
 
 
@@ -134,15 +150,18 @@ def respond(filename: str):
     """Return a FileResponse for a wallpaper. Raises FileNotFoundError if missing.
 
     The caller (main.py) wraps this in a 404 handler. The filename must match
-    ``_SAFE_NAME`` so path traversal via .. is impossible.
+    ``_SAFE_NAME`` so path traversal via .. is impossible. Checks both the
+    user-uploaded directory and the bundled static defaults.
     """
     from fastapi.responses import FileResponse
 
     if not _SAFE_NAME.match(filename):
-        # Sanitize — never let a bare path through. Treat as not-found so the
-        # 404 handler responds cleanly instead of leaking validation internals.
         raise FileNotFoundError(filename)
-    p = _wallpaper_dir() / filename
-    if not p.is_file():
-        raise FileNotFoundError(filename)
-    return FileResponse(p)
+
+    # Check user-uploaded wallpapers first, then bundled defaults
+    for d in [_wallpaper_dir(), _STATIC_WALLPAPER_DIR]:
+        p = d / filename
+        if p.is_file():
+            return FileResponse(p)
+
+    raise FileNotFoundError(filename)
