@@ -16,11 +16,9 @@ A single discovered container, mirrors backend `Service`.
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | `string` | Stable id, e.g. `pve-lxc-100-docker-grafana`. |
+| `id` | `string` | Stable id, e.g. `docker-grafana`. |
 | `name` | `string` | Container name. |
-| `node` | `string` | PVE node. |
-| `vmid` | `number` | Guest VMID. |
-| `kind` | `"lxc" \| "qemu"` | Guest type. |
+| `kind` | `"container"` | Always a Docker container. |
 | `status` | `ServiceStatus` | Current status. |
 | `image` | `string` | Docker image ref. |
 | `ports` | `PortMapping[]` | Published ports. |
@@ -40,7 +38,7 @@ A single discovered container, mirrors backend `Service`.
 | Field | Type | Notes |
 |---|---|---|
 | `services` | `DiscoveredService[]` | All discovered. |
-| `source` | `string` | `"mock"` or `"proxmox:<host>"`. |
+| `source` | `string` | `"mock"` or `"docker:<host>"`. |
 | `count` | `number` | `services.length`. |
 
 ### `ServiceHealth`

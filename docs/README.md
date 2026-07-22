@@ -1,6 +1,6 @@
-# Proxmox Dashboard — Code Documentation
+# Docker Dashboard — Code Documentation
 
-Per-module documentation for the Proxmox Dashboard codebase. Every markdown
+Per-module documentation for the Docker Dashboard codebase. Every markdown
 file in this tree documents one source module — backend or frontend — with
 its exported symbols, types, side effects, and notable implementation
 details.
@@ -22,7 +22,6 @@ docs/
 │   ├── docker_discover.md
 │   ├── main.md
 │   ├── mock_data.md
-│   ├── proxmox.md
 │   ├── schemas.md
 │   ├── wallpapers.md
 │   └── widgets.md
@@ -54,9 +53,8 @@ end-to-end:
    - [`backend/schemas.md`](backend/schemas.md) — the public API contract.
    - [`backend/config_store.md`](backend/config_store.md) — how config
      persists.
-   - [`backend/proxmox.md`](backend/proxmox.md) — talking to PVE.
    - [`backend/docker_discover.md`](backend/docker_discover.md) — finding
-     containers inside guests.
+     containers on the host.
    - [`backend/wallpapers.md`](backend/wallpapers.md) — wallpaper upload/
      serve.
    - [`backend/mock_data.md`](backend/mock_data.md) — what you see in mock

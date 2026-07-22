@@ -1,14 +1,14 @@
-# Proxmox Dashboard — full stack.
+# Docker Dashboard — full stack.
 #
 # Runs the FastAPI backend + nginx-served React frontend behind a single
 # published port (8888 by default). The frontend reverse-proxies /api and
 # /wallpapers to the backend, so the user only needs to talk to one origin.
 #
-# Quick start (mock mode, no Proxmox needed):
+# Quick start (mock mode, no Docker host needed):
 #   docker compose up --build
 # Then open http://localhost:8888
 #
-# Real Proxmox: edit the `backend.environment` block (or set up a .env file
+# Real Docker host: edit the `backend.environment` block (or set up a .env file
 # at the repo root and uncomment `env_file`) before `docker compose up`.
 
 services:
@@ -23,24 +23,8 @@ services:
     # ports:
     #   - "8000:8000"
     environment:
-      # --- Proxmox connection (override for your host) -------------------
-      PROXMOX_API_URL: ${PROXMOX_API_URL:-https://proxmox.local:8006/}
-      PROXMOX_API_TOKEN: ${PROXMOX_API_TOKEN:-}
-      PROXMOX_VERIFY_TLS: ${PROXMOX_VERIFY_TLS:-false}
-      PROXMOX_NODE: ${PROXMOX_NODE:-}
-
-      # --- SSH for in-guest Docker discovery -----------------------------
-      # Optional. When empty, the backend falls back to `pct exec` for LXC
-      # guests (works only if the backend container can talk to the PVE host
-      # API and a PVE API token grants pct permissions).
-      SSH_HOST: ${SSH_HOST:-}
-      SSH_PORT: ${SSH_PORT:-22}
-      SSH_USER: ${SSH_USER:-root}
-      SSH_KEY_FILE: ${SSH_KEY_FILE:-}
-      SSH_PASSWORD: ${SSH_PASSWORD:-}
-
       # --- Mode + persistence --------------------------------------------
-      # MOCK=true → no real Proxmox host required (dry-run for development).
+      # MOCK=true → no real Docker host required (dry-run for development).
       MOCK: ${MOCK:-true}
       CONFIG_DB: /data/config.db
 

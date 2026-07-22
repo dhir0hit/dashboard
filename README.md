@@ -2,11 +2,11 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A full-stack dashboard for services on a NAS. The backend (FastAPI) discovers
-containers/VMs via the Proxmox API and inspects each guest for running Docker
-services. The frontend (React + Vite + Tailwind) renders the discovered services
-as animated tiles with health polling, a settings page for managing dashboard
-layout, and per-service background effects.
+A full-stack dashboard for services on a Docker host. The backend (FastAPI)
+discovers running containers via the Docker socket and inspects each for
+health status. The frontend (React + Vite + Tailwind) renders the discovered
+services as animated tiles with health polling, a settings page for managing
+dashboard layout, and per-service background effects.
 
 ## Screenshots
 
@@ -33,10 +33,10 @@ layout, and per-service background effects.
 │                                                                     │
 │  ┌───────────────────────┐         ┌──────────────────────────────┐ │
 │  │  frontend (nginx:80)  │  :8888  │  backend (FastAPI :8000)     │ │
-│  │  ─ React SPA          │ ◀────── │  ─ Proxmox API client         │ │
-│  │  ─ nginx serves dist/  │ proxies │  ─ Docker socket / SSH        │ │
-│  │  ─ /api proxy to      │  /api/  │  ─ SQLite config persistence  │ │
-│  │    backend            │   /wppr │  ─ Wallpaper upload/storage    │ │
+│  │  ─ React SPA          │ ◀────── │  ─ Docker socket client     │ │
+│  │  ─ nginx serves dist/  │ proxies │  ─ SQLite config persistence│ │
+│  │  ─ /api proxy to      │  /api/  │  ─ Wallpaper upload/storage │ │
+│  │    backend            │   /wppr │                              │ │
 │  └───────────────────────┘         └──────────────────────────────┘ │
 │         │                                       │                  │
 │         │ exposed                                mounts             │
@@ -52,7 +52,7 @@ talks to exactly one origin and no CORS configuration is needed in production.
 ## Quick start (mock mode)
 
 `docker compose up` defaults to `MOCK=true`, so the stack boots without a real
-Proxmox host:
+Docker host:
 
 ```bash
 git clone <this repo> && cd Dashboard
@@ -60,10 +60,10 @@ docker compose up --build
 ```
 
 Open http://localhost:8888 — you will see four mock services in the tile grid,
-search/filter controls, and the Settings page. Edit `PROXMOX_API_TOKEN`,
-`PROXMOX_API_URL`, and set `MOCK=false` to talk to a real host.
+search/filter controls, and the Settings page. Edit `DOCKER_SOCK` and set
+`MOCK=false` to talk to a real Docker host.
 
-## Configuring for a real Proxmox host
+## Configuring for a real Docker host
 
 1. Copy the env template and edit it:
    ```bash
@@ -71,24 +71,13 @@ search/filter controls, and the Settings page. Edit `PROXMOX_API_TOKEN`,
    $EDITOR .env
    ```
 2. Set, at minimum:
-   - `PROXMOX_API_URL` — the PVE API endpoint (e.g. `https://proxmox.example.com:8006/`).
-   - `PROXMOX_API_TOKEN` — `user!tokenid=secret`. Create one in the PVE web UI
-     under *Datacenter → API Tokens*. Verify: the `!` and `=` are required.
-   - `PROXMOX_VERIFY_TLS=false` for self-signed certs (default).
+   - `DOCKER_SOCK` — path to the Docker socket (e.g. `/var/run/docker.sock`).
    - `MOCK=false` to stop returning mock data.
-3. (Optional) SSH for in-guest Docker discovery. The backend can discover
-   Docker containers inside LXC/QEMU guests one of three ways, in order:
-   1. Direct Docker socket access (set `DOCKER_SOCK=/var/run/docker.sock` and
-      mount it — the compose file already does this; comment out the line in
-      `docker-compose.yml` to disable).
-   2. SSH into each guest (`SSH_HOST`, `SSH_USER`, `SSH_KEY_FILE`).
-   3. `pct exec` from the PVE host (needs token permissions on the host, no
-      per-guest configuration).
-4. Google Calendar setup (one-time):
+3. Google Calendar setup (one-time):
    - Create a **Desktop app** OAuth client in [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
      - Enable the **Google Calendar API**
    - Add `VITE_GOOGLE_CLIENT_ID=<your-desktop-client-id>.apps.googleusercontent.com` to your `frontend/.env`
-5. Bring the stack up:
+4. Bring the stack up:
    ```bash
    docker compose --env-file .env up --build
    ```
@@ -125,7 +114,7 @@ Change the published host port with `DASHBOARD_PORT` (default `8888`).
 ```
 .
 ├── docker-compose.yml     # service definitions, env vars, volumes
-├── .env.example           # copy to .env for real-Proxmox configuration
+├── .env.example           # copy to .env for real-Docker configuration
 ├── README.md              # this file
 ├── backend/
 │   ├── Dockerfile         # FastAPI + uvicorn runtime
@@ -159,15 +148,10 @@ npm run dev   # http://localhost:5173 — vite dev-proxies /api → :8000
 
 ## Troubleshooting
 
-- **Backend container exits with `PROXMOX_API_TOKEN not set`**: that's a
-  non-mock startup rejecting an auth-less request. Set `MOCK=true` or provide
-  a real token.
-- **Self-signed Proxmox cert errors from the backend**: confirm
-  `PROXMOX_VERIFY_TLS=false` is set in the backend environment.
-- **No services discovered**: check the backend logs
+- **Backend container exits with no services discovered**: check the backend logs
   (`docker compose logs backend`). Mock mode returns 4 canned services; real
-  mode returns only guests that have Docker installed and reachable either via
-  the Docker socket or SSH.
+  mode returns only containers that have Docker installed and reachable via
+  the Docker socket.
 - **`port 8888 is already in use`**: set `DASHBOARD_PORT=8000` (or any free
   port) in your `.env` and restart.
 
@@ -178,5 +162,4 @@ npm run dev   # http://localhost:5173 — vite dev-proxies /api → :8000
 - [x] `/api/services` proxies through to the backend and returns mock services
 - [x] Config edits persist across `docker compose down` / `up` ( SQLite
       volume)
-- [x] Proxmox host URL, API token, and Docker socket are all configurable via
-      environment variables
+- [x] Docker socket path is configurable via environment variables

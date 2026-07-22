@@ -13,9 +13,9 @@ Swagger) and `/health` endpoints on port 8000.
 
 ```python
 app = FastAPI(
-    title="Proxmox Dashboard Backend",
+    title="Docker Dashboard Backend",
     version="0.1.0",
-    description="Service-discovery REST API for an LXC/VM-heavy Proxmox host.",
+    description="Service-discovery REST API for Docker containers on the host.",
 )
 ```
 
@@ -26,23 +26,21 @@ local dev (vite on :5173 → backend on :8000).
 ### Startup hook
 
 `@app.on_event("startup")` calls `init_db(s.config_db)` to create the SQLite
-config table if it doesn't exist, then logs the mock/pve-mode.
+config table if it doesn't exist, then logs the mock/docker_socket mode.
 
 ## Discovery
 
 ### `_gather_real_services() -> tuple[list[Service], str]`
 
-Internal helper. Walks a real PVE host:
+Internal helper. Connects to the local Docker socket:
 
-1. `ProxmoxClient(s).pick_node()` — auto-pick a reachable node.
-2. For each of `("lxc", "qemu")`, `pve.list_lxc(node)` / `pve.list_qemu(node)`.
-3. Skip non-running guests (only `running` guests can have Docker containers).
-4. `discover_docker_services(s, node, vmid, kind)` on each running guest —
-   errors are logged per-guest and don't abort the loop.
-5. Returns `(services, f"proxmox:{pve.host_label()}")`.
+1. Runs `docker ps -a` to list all containers on the host.
+2. Parses the output into `DockerRow` objects.
+3. Converts each row into a `Service` with `kind=ContainerKind.CONTAINER`.
+4. Returns `(services, "docker")`.
 
-Raises `ProxmoxAuthError` / `ProxmoxError` up to the route handlers, which
-map them to HTTP 401 / 502.
+Raises generic exceptions (logged as docker discovery failures) up to the route
+handlers, which map them to HTTP 502.
 
 ## Routes
 
@@ -50,12 +48,11 @@ map them to HTTP 401 / 502.
 
 | Method | Path | Handler | Response model | Errors |
 |---|---|---|---|---|
-| `GET` | `/api/services` | `get_services` | `ServicesResponse` | 401 (no token), 502 (PVE error) |
-| `GET` | `/api/services/{service_id}/health` | `get_service_health` | `HealthResponse` | 404 (unknown id), 401, 502 |
+| `GET` | `/api/services` | `get_services` | `ServicesResponse` | 502 (Docker error) |
+| `GET` | `/api/services/{service_id}/health` | `get_service_health` | `HealthResponse` | 404 (unknown id), 502 |
 
 `get_services`:
 - `MOCK=true` → returns `MOCK_SERVICES` with `source="mock"`.
-- Otherwise, if `proxmox_api_token` is empty → `401`.
 - Otherwise calls `_gather_real_services()`.
 
 `get_service_health`:
@@ -166,7 +163,7 @@ stub with `source="stub"`. Accepts either a top-level list, or an object with
 
 | Method | Path | Handler | Notes |
 |---|---|---|---|
-| `GET` | `/health` | `root_health` | `{"ok": true, "mock": bool, "pve": "<url>"}` — liveness for the compose healthcheck. |
+| `GET` | `/health` | `root_health` | `{"ok": true, "mock": bool, "docker_socket": "<path>"}` — liveness for the compose healthcheck. |
 | `GET` | `/` | `root` | Manifest with `name`, `version`, `docs`, and `endpoints` list. Useful for sanity-checking the backend from inside the container network. |
 
 ### Widgets + auto-login

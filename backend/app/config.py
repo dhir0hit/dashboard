@@ -13,18 +13,8 @@ class Settings(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-    # Proxmox
-    proxmox_api_url: str = Field("https://proxmox.local:8006/")
-    proxmox_api_token: str = Field("")  # user!tokenid=secret
-    proxmox_verify_tls: bool = Field(False)
-    proxmox_node: str = Field("")
-
-    # SSH for in-guest docker discovery
-    ssh_host: str = Field("")
-    ssh_port: int = Field(22)
-    ssh_user: str = Field("root")
-    ssh_key_file: str = Field("")
-    ssh_password: str = Field("")
+    # Docker
+    docker_socket: str = Field("/var/run/docker.sock")
 
     # Mode
     mock: bool = Field(False, alias="MOCK")
@@ -41,25 +31,8 @@ class Settings(BaseSettings):
 
     # --- Derived helpers ------------------------------------------------
     @property
-    def auth_header(self) -> dict[str, str]:
-        if not self.proxmox_api_token:
-            return {}
-        return {"Authorization": f"PVEAPIToken={self.proxmox_api_token}"}
-
-    @property
-    def token_user(self) -> str:
-        return self.proxmox_api_token.split("!", 1)[0] if "!" in self.proxmox_api_token else ""
-
-    @property
     def base_url(self) -> str:
-        u = self.proxmox_api_url.rstrip("/")
-        return u if u.endswith("/api2/json") else f"{u}/api2/json"
-
-    @field_validator("proxmox_api_url")
-    @classmethod
-    def _ensure_trailing_slash(cls, v: str) -> str:
-        v = v.strip()
-        return v if v.endswith("/") else v + "/"
+        return f"http://{self.host}:{self.port}"
 
     @field_validator("config_db")
     @classmethod

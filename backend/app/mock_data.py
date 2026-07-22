@@ -1,39 +1,33 @@
-"""Deterministic mock dataset so the API can run without a real Proxmox host."""
+"""Deterministic mock dataset so the API can run without a real Docker host."""
 from __future__ import annotations
 
-from .schemas import Service, ServiceHealth, ServiceStatus
+from .schemas import ContainerKind, PortMapping, Service, ServiceHealth, ServiceStatus
 
 MOCK_SERVICES: list[Service] = [
     Service(
-        id="pve-lxc-100-docker-sonarr",
+        id="docker-sonarr",
         name="sonarr",
-        node="pve",
-        vmid=100,
-        kind="lxc",
+        kind=ContainerKind.CONTAINER,
         status=ServiceStatus.RUNNING,
-        ports=[{"host": 8989, "container": 8989, "protocol": "tcp"}],
+        ports=[PortMapping(host=8989, container=8989, protocol="tcp")],
         icon_hint="sonarr",
         image="lscr.io/linuxserver/sonarr:latest",
     ),
     Service(
-        id="pve-lxc-100-docker-radarr",
+        id="docker-radarr",
         name="radarr",
-        node="pve",
-        vmid=100,
-        kind="lxc",
+        kind=ContainerKind.CONTAINER,
         status=ServiceStatus.RUNNING,
-        ports=[{"host": 7878, "container": 7878, "protocol": "tcp"}],
+        ports=[PortMapping(host=7878, container=7878, protocol="tcp")],
         icon_hint="radarr",
         image="lscr.io/linuxserver/radarr:latest",
     ),
     Service(
-        id="pve-lxc-101-docker-lidarr",
+        id="docker-lidarr",
         name="lidarr",
-        node="pve",
-        vmid=101,
-        kind="lxc",
+        kind=ContainerKind.CONTAINER,
         status=ServiceStatus.STOPPED,
-        ports=[{"host": 8686, "container": 8686, "protocol": "tcp"}],
+        ports=[PortMapping(host=8686, container=8686, protocol="tcp")],
         icon_hint="lidarr",
         image="lscr.io/linuxserver/lidarr:latest",
     ),

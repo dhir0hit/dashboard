@@ -1,9 +1,9 @@
-"""FastAPI application — Proxmox service discovery + dashboard config.
+"""FastAPI application — Docker service discovery + dashboard config.
 
 Run:
     uvicorn app.main:app --host 127.0.0.1 --port 8000
 
-Set MOCK=true for offline development (no real Proxmox host needed).
+Set MOCK=true for offline development (no real Docker host needed).
 """
 from __future__ import annotations
 
@@ -31,9 +31,8 @@ from .calendar_store import (
     delete_event as db_delete_event,
     upsert_google_event,
 )
-from .docker_discover import discover_docker_services
+from .docker_discover import discover_docker_services_local
 from .mock_data import MOCK_HEALTH, MOCK_SERVICES
-from .proxmox import ProxmoxAuthError, ProxmoxClient, ProxmoxError
 from .schemas import (
     BackgroundSettings,
     Bookmark,
@@ -67,9 +66,9 @@ log = logging.getLogger("dashboard")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 app = FastAPI(
-    title="Proxmox Dashboard Backend",
+    title="Docker Dashboard Backend",
     version="0.1.0",
-    description="Service-discovery REST API for an LXC/VM-heavy Proxmox host.",
+    description="Service-discovery REST API for Docker containers on the host.",
 )
 # Allow a frontend on a different origin to hit this API.
 app.add_middleware(
@@ -84,41 +83,15 @@ app.add_middleware(
 def _startup() -> None:
     s = get_settings()
     init_db(s.config_db)
-    log.info("Dashboard backend ready (mock=%s, pve=%s)", s.mock, s.proxmox_api_url)
+    log.info("Dashboard backend ready (mock=%s, docker_socket=%s)", s.mock, s.docker_socket)
 
 
 # ---------------------------------------------------------------- discovery
 def _gather_real_services() -> tuple[list[Service], str]:
-    """Return services from a real PVE host. Raises ProxmoxError on failure."""
+    """Return services from the local Docker host."""
     s = get_settings()
-    pve = ProxmoxClient(s)
-    node = pve.pick_node()
-    out: list[Service] = []
-    for kind in ("lxc", "qemu"):
-        try:
-            if kind == "lxc":
-                guests = pve.list_lxc(node)
-            else:
-                guests = pve.list_qemu(node)
-        except ProxmoxError as e:
-            log.warning("listing %s on node %s failed: %s", kind, node, e)
-            continue
-        for g in guests:
-            vmid = int(g.get("vmid", 0))
-            if vmid <= 0:
-                continue
-            guest_status = str(g.get("status", "")).lower()
-            # only running guests can have docker containers
-            if guest_status and guest_status not in ("running",):
-                continue
-            kind_enum = "lxc" if kind == "lxc" else "qemu"
-            try:
-                svcs = discover_docker_services(s, node, vmid, kind_enum)  # type: ignore[arg-type]
-            except Exception as e:  # noqa: BLE001
-                log.warning("docker discovery failed for %s %s: %s", kind, vmid, e)
-                continue
-            out.extend(svcs)
-    return out, f"proxmox:{pve.host_label()}"
+    services = discover_docker_services_local(s)
+    return services, f"docker:{s.docker_socket}"
 
 
 @app.get(
@@ -126,23 +99,17 @@ def _gather_real_services() -> tuple[list[Service], str]:
     response_model=ServicesResponse,
     responses={502: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
     tags=["services"],
-    summary="List all discoverable services across LXC/QEMU guests",
+    summary="List all discoverable services (Docker containers) on the host",
 )
 def get_services() -> ServicesResponse:
     s = get_settings()
     if s.mock:
         return ServicesResponse(services=MOCK_SERVICES, source="mock", count=len(MOCK_SERVICES))
-    if not s.proxmox_api_token:
-        raise HTTPException(
-            status_code=401,
-            detail="PROXMOX_API_TOKEN not set; set MOCK=true for local development",
-        )
     try:
         services, source = _gather_real_services()
-    except ProxmoxAuthError as e:
-        raise HTTPException(status_code=401, detail=f"proxmox auth failed: {e}") from e
-    except ProxmoxError as e:
-        raise HTTPException(status_code=502, detail=f"proxmox error: {e}") from e
+    except Exception as e:  # noqa: BLE001
+        log.error("docker discovery failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"docker error: {e}") from e
     return ServicesResponse(services=services, source=source, count=len(services))
 
 
@@ -162,10 +129,9 @@ def get_service_health(service_id: str) -> HealthResponse:
     # Real mode: fetch fresh service list and report health for the requested id.
     try:
         services, _ = _gather_real_services()
-    except ProxmoxAuthError as e:
-        raise HTTPException(status_code=401, detail=f"proxmox auth failed: {e}") from e
-    except ProxmoxError as e:
-        raise HTTPException(status_code=502, detail=f"proxmox error: {e}") from e
+    except Exception as e:  # noqa: BLE001
+        log.error("docker discovery failed: %s", e)
+        raise HTTPException(status_code=502, detail=f"docker error: {e}") from e
 
     match = next((x for x in services if x.id == service_id), None)
     if match is None:
@@ -757,13 +723,13 @@ def tile_login(service_id: str):
 @app.get("/health", tags=["meta"])
 def root_health() -> dict:
     s = get_settings()
-    return {"ok": True, "mock": s.mock, "pve": s.proxmox_api_url}
+    return {"ok": True, "mock": s.mock, "docker_socket": s.docker_socket}
 
 
 @app.get("/", tags=["meta"])
 def root() -> dict:
     return {
-        "name": "Proxmox Dashboard Backend",
+        "name": "Docker Dashboard Backend",
         "version": "0.1.0",
         "docs": "/docs",
         "endpoints": [
