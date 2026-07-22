@@ -33,6 +33,12 @@ from .calendar_store import (
 )
 from .docker_discover import discover_docker_services_local
 from .mock_data import MOCK_HEALTH, MOCK_SERVICES
+from .service_apis import (
+    fetch_jellyfin_info,
+    fetch_qbittorrent_info,
+    fetch_radarr_info,
+    ping_website,
+)
 from .schemas import (
     BackgroundSettings,
     Bookmark,
@@ -917,3 +923,66 @@ def hermes_calendar_events() -> CalendarListResponse:
             done=False,
         ))
     return CalendarListResponse(events=events, count=len(events))
+
+
+# ------------------------------------------------------ service APIs (t_86528492, t_22200dea)
+# Ping any URL to check if a website is online, plus fetch stats from
+# Jellyfin / Radarr / qBittorrent using credentials stored on the tile.
+
+
+@app.get(
+    "/api/ping",
+    tags=["services"],
+    summary="Ping a website URL and return its status (online/offline, response time)",
+)
+async def api_ping(url: str = Query(..., min_length=1)) -> dict:
+    return await ping_website(url)
+
+
+@app.get(
+    "/api/tiles/{service_id}/info",
+    tags=["services"],
+    summary="Fetch live info from a tile's backing service (Jellyfin/Radarr/qBittorrent/ping)",
+)
+async def tile_info(service_id: str) -> dict:
+    s = get_settings()
+    cfg = latest(s.config_db) or DashboardConfig()
+    entry = next((sv for sv in cfg.services if sv.id == service_id), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"unknown service id: {service_id}")
+
+    target_url = entry.api_url or entry.url
+    if not target_url:
+        raise HTTPException(status_code=400, detail="tile has no URL configured")
+
+    wtype = (entry.widget_type or "").lower()
+    icon = (entry.icon or "").lower()
+
+    # Jellyfin
+    if wtype == "jellyfin" or "jellyfin" in icon:
+        if not entry.api_key:
+            return {"type": "jellyfin", "error": "API key not configured"}
+        data = await fetch_jellyfin_info(target_url, entry.api_key)
+        data["type"] = "jellyfin"
+        return data
+
+    # Radarr
+    if wtype == "radarr" or "radarr" in icon:
+        if not entry.api_key:
+            return {"type": "radarr", "error": "API key not configured"}
+        data = await fetch_radarr_info(target_url, entry.api_key)
+        data["type"] = "radarr"
+        return data
+
+    # qBittorrent
+    if wtype in ("qbit_torrent", "qbittorrent") or "qbittorrent" in icon:
+        if not entry.username or not entry.password:
+            return {"type": "qbittorrent", "error": "Credentials not configured"}
+        data = await fetch_qbittorrent_info(target_url, entry.username, entry.password)
+        data["type"] = "qbittorrent"
+        return data
+
+    # Generic ping fallback
+    data = await ping_website(target_url)
+    data["type"] = "ping"
+    return data

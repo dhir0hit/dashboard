@@ -29,7 +29,7 @@ export interface DiscoveredService {
 
 export interface ServicesResponse {
   services: DiscoveredService[];
-  source: string;       // "mock" | "proxmox:<host>"
+  source: string;       // "mock" | "docker:<host>"
   count: number;
 }
 
@@ -54,7 +54,7 @@ export interface ServiceEntry {
   icon_url?: string;     // custom icon URL (.svg/.png/.jpg) — overrides emoji
   container_id?: string; // e.g. "pve-lxc-100-docker-sonarr"
   display_order: number;
-  // Optional read-only fields surfaced from Proxmox discovery (not editable
+  // Optional read-only fields surfaced from Docker discovery (not editable
   // from the settings page — they come from /api/services).
   status?: ServiceStatus;
   ports?: { host: number; container: number; protocol: string }[];
