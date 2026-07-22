@@ -524,17 +524,17 @@ function ServiceForm({
         </p>
       </div>
 
-      {/* Widget auth fields — shown only when the selected widget asks for them. */}
-      {authSchema !== "none" && (
+      {/* Service API credentials — used for live info fetching (not login). */}
+      {form.widget_type && form.widget_type !== "generic" && (
         <div className="sm:col-span-2">
           <div className="rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-3">
             <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-cyan-200">
-              <Upload className="h-3 w-3" /> Auto-login credentials
+              <Upload className="h-3 w-3" /> Service API (for live stats)
             </div>
             <p className="mb-3 text-[11px] text-slate-400">
-              Stored on the tile. Click the "Open & login" button on the home page
-              and the dashboard will POST these to the service login API on your
-              behalf, then redirect you to the dashboard.
+              The dashboard uses these credentials to fetch live stats from the
+              service API (downloads, queries, version, etc.) and display them on
+              the tile card.
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="sm:col-span-2">

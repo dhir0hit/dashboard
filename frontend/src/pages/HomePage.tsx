@@ -7,8 +7,6 @@ import {
   Boxes,
   CheckCircle2,
   ExternalLink,
-  Loader2,
-  LogIn,
   PauseCircle,
   RefreshCw,
   Search,
@@ -23,9 +21,9 @@ import type {
   DiscoveredService,
   ServiceEntry,
   ServiceHealth,
+  ServiceInfo,
   ServiceStatus,
   ServicesResponse,
-  WidgetDefinition,
 } from "../types";
 
 // Full Dashboard home page (frontend-visuals task t_dc212077).
@@ -51,17 +49,12 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
   // --- health map (service_id -> health) --------------------------------
   const [healthById, setHealthById] = useState<Record<string, ServiceHealth>>({});
 
+  // --- service info map (tile_id -> ServiceInfo) ─────────────────────
+  const [infoById, setInfoById] = useState<Record<string, ServiceInfo>>({});
+
   // --- filters ----------------------------------------------------------
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | ServiceStatus>("all");
-
-  // --- widget registry (for auth_schema lookup on the Login button) ------
-  const [widgets, setWidgets] = useState<WidgetDefinition[]>([]);
-  useEffect(() => {
-    api.listWidgets()
-      .then(setWidgets)
-      .catch(() => setWidgets([]));
-  }, []);
 
   const loadDiscovery = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -236,6 +229,34 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
     return () => window.clearInterval(handle);
   }, [pollHealth, intervalMs]);
 
+  // --- service info polling ────────────────────────────────────────
+  // Poll /api/tiles/{id}/info for every tile with a widget_type. The
+  // backend calls the service's own API and returns parsed stats.
+  const pollInfo = useCallback(async () => {
+    const widgetTiles = tiles.filter((t) => t.entry.widget_type);
+    if (widgetTiles.length === 0) return;
+    const updates: Record<string, ServiceInfo> = {};
+    await Promise.all(
+      widgetTiles.map(async (t) => {
+        const info = await api.getTileInfo(t.entry.id);
+        if (info && info.widget_type) updates[t.entry.id] = info;
+      })
+    );
+    if (mountedRef.current && Object.keys(updates).length) {
+      setInfoById((prev) => ({ ...prev, ...updates }));
+    }
+  }, [tiles]);
+
+  useEffect(() => {
+    void pollInfo();
+    const handle = window.setInterval(() => void pollInfo(), intervalMs * 3);
+    return () => window.clearInterval(handle);
+  }, [pollInfo, intervalMs]);
+
+  // Pass infoById down through TileGrid → TileCard
+  // Update TileGrid to accept infoById
+
+
   // ----------------------------------------------------------------------
   return (
     <div className="relative space-y-6">
@@ -304,7 +325,7 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
                 </span>
                 <div className="ml-2 h-px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
               </header>
-              <TileGrid items={items} widgets={widgets} />
+              <TileGrid items={items} infoById={infoById} />
             </section>
           ))}
 
@@ -319,7 +340,7 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
                 </span>
                 <div className="ml-2 h-px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
               </header>
-              <TileGrid items={unlinkedFiltered} widgets={widgets} />
+              <TileGrid items={unlinkedFiltered} infoById={infoById} />
             </section>
           )}
         </div>
@@ -623,7 +644,7 @@ function Filters({
 
 function TileGrid({
   items,
-  widgets = [],
+  infoById = {},
 }: {
   items: {
     entry: ServiceEntry;
@@ -631,7 +652,7 @@ function TileGrid({
     health?: ServiceHealth;
     effectiveStatus: ServiceStatus;
   }[];
-  widgets?: WidgetDefinition[];
+  infoById?: Record<string, ServiceInfo>;
 }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
@@ -642,229 +663,9 @@ function TileGrid({
           discovered={t.discovered}
           health={t.health}
           status={t.effectiveStatus}
-          widgets={widgets}
+          info={infoById[t.entry.id]}
         />
       ))}
-    </div>
-  );
-}
-
-// Login button + modal for widget-backed tiles. Opens a dialog showing
-// the stored credentials (username/password or API key) pre-filled and
-// editable. On submit, calls /api/tiles/{id}/auth to perform server-side
-// login, plants any returned cookies, then opens the redirect URL.
-// Lives INSIDE the TileCard so its click handler can stopPropagation.
-function TileLoginButton({ entry }: { entry: ServiceEntry }) {
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [showModal, setShowModal] = useState(false);
-
-  function handleClick(e: React.MouseEvent) {
-    // Critical: the parent TileCard is wrapped in an <a> that would otherwise
-    // catch the click. Without stopPropagation the click just opens the link.
-    e.preventDefault();
-    e.stopPropagation();
-    setErr(null);
-    setShowModal(true);
-  }
-
-  return (
-    <>
-      <button
-        type="button"
-        onClick={handleClick}
-        className="btn-ghost relative z-10 px-2 py-1 text-[11px]"
-        aria-label={`Log in to ${entry.name}`}
-        title={`Auto-login to ${entry.name}`}
-      >
-        <LogIn className="h-3 w-3" />
-        <span>Login</span>
-      </button>
-      {showModal && (
-        <LoginModal
-          entry={entry}
-          onClose={() => setShowModal(false)}
-          onLoading={setLoading}
-          onError={setErr}
-          loading={loading}
-          err={err}
-        />
-      )}
-    </>
-  );
-}
-
-function LoginModal({
-  entry,
-  onClose,
-  onLoading,
-  onError,
-  loading,
-  err,
-}: {
-  entry: ServiceEntry;
-  onClose: () => void;
-  onLoading: (v: boolean) => void;
-  onError: (e: string | null) => void;
-  loading: boolean;
-  err: string | null;
-}) {
-  // Pre-fill from the tile config; user can override before submitting.
-  const [username, setUsername] = useState(entry.username ?? "");
-  const [password, setPassword] = useState(entry.password ?? "");
-  const [apiKey, setApiKey] = useState(entry.api_key ?? "");
-  // Determine what fields to show based on the widget type
-  const needsBasic = !!(entry.widget_type && !entry.api_key);
-  const hasApiKey = !!entry.api_key;
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    onLoading(true);
-    onError(null);
-    try {
-      // If credentials changed, update the tile first, then login.
-      const patch: Partial<ServiceEntry> = {};
-      if (username !== (entry.username ?? "")) patch.username = username || undefined;
-      if (password !== (entry.password ?? "")) patch.password = password || undefined;
-      if (apiKey !== (entry.api_key ?? "")) patch.api_key = apiKey || undefined;
-
-      if (Object.keys(patch).length > 0) {
-        await api.updateService(entry.id, { ...entry, ...patch });
-      }
-
-      // Now perform the login
-      const out = await api.tileLogin(entry.id);
-      if (out.cookies?.length) {
-        for (const c of out.cookies) {
-          const crumb = c.split(";", 1)[0];
-          document.cookie = `${crumb}; path=/`;
-        }
-      }
-      // Open the service URL in a new tab
-      window.open(out.redirect_url, "_blank", "noopener,noreferrer");
-      onClose();
-    } catch (e) {
-      onError((e as Error).message || "Login failed");
-    } finally {
-      onLoading(false);
-    }
-  }
-
-  // Close on backdrop click
-  function onBackdrop(e: React.MouseEvent) {
-    if (e.target === e.currentTarget) onClose();
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-      onClick={onBackdrop}
-    >
-      <form
-        onSubmit={handleSubmit}
-        className="glass w-full max-w-md space-y-4 p-6 animate-slide-up"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-white">Login to {entry.name}</h3>
-            <p className="text-xs text-slate-400">
-              {entry.widget_type && (
-                <span className="chip border border-cyan-400/30 bg-cyan-400/10 text-cyan-200">
-                  {entry.widget_type}
-                </span>
-              )}
-              {" "}Credentials are pre-filled from the tile config.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="btn-ghost px-2 py-1"
-            aria-label="Close"
-          >
-            <XCircle className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* API URL display */}
-        <div>
-          <label className="label">Service URL</label>
-          <input
-            className="input"
-            value={entry.api_url || entry.url || ""}
-            readOnly
-          />
-        </div>
-
-        {/* Username + Password (for basic/form auth) */}
-        {(needsBasic || (!hasApiKey && username)) && (
-          <>
-            <div>
-              <label className="label">Username</label>
-              <input
-                className="input"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="admin"
-                autoComplete="off"
-                autoFocus
-              />
-            </div>
-            <div>
-              <label className="label">Password</label>
-              <input
-                type="password"
-                className="input"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                autoComplete="current-password"
-              />
-            </div>
-          </>
-        )}
-
-        {/* API key (for api_key auth) */}
-        {hasApiKey && (
-          <div>
-            <label className="label">API Key</label>
-            <input
-              type="password"
-              className="input font-mono"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="abcd1234…"
-              autoComplete="off"
-              autoFocus
-            />
-          </div>
-        )}
-
-        {/* No credentials needed message */}
-        {!needsBasic && !hasApiKey && (
-          <p className="text-sm text-slate-400">
-            This service does not require credentials. Click "Open" to go directly.
-          </p>
-        )}
-
-        {err && (
-          <div className="flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-950/40 p-3 text-sm text-rose-200">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span className="break-all">{err}</span>
-          </div>
-        )}
-
-        <div className="flex items-center justify-end gap-2">
-          <button type="button" onClick={onClose} className="btn-ghost">
-            Cancel
-          </button>
-          <button type="submit" disabled={loading} className="btn-primary">
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
-            {loading ? "Logging in…" : "Login & Open"}
-          </button>
-        </div>
-      </form>
     </div>
   );
 }
@@ -874,13 +675,13 @@ function TileCard({
   discovered,
   health,
   status,
-  widgets = [],
+  info,
 }: {
   entry: ServiceEntry;
   discovered?: DiscoveredService;
   health?: ServiceHealth;
   status: ServiceStatus;
-  widgets?: WidgetDefinition[];
+  info?: ServiceInfo;
 }) {
   const icon = entry.icon?.trim() || iconForHint(discovered?.icon_hint);
   const iconUrl = entry.icon_url?.trim();
@@ -888,11 +689,7 @@ function TileCard({
   const statusLabel = labelForStatus(status);
   const primaryPort = discovered?.ports?.[0];
   const link = entry.url?.trim() || (discovered && primaryPort ? makeBestGuessUrl(discovered) : "");
-  const widgetDef = entry.widget_type ? widgets.find((w) => w.id === entry.widget_type) : undefined;
   const hasWidget = !!entry.widget_type;
-  // Only show the Login button when the widget actually needs credentials.
-  // auth_schema "none" means the tile is just a link — no auto-login.
-  const needsLogin = hasWidget && widgetDef && widgetDef.auth_schema !== "none";
   const content = (
     <>
       <div className="flex items-start justify-between gap-2">
@@ -948,10 +745,10 @@ function TileCard({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {needsLogin && <TileLoginButton entry={entry} />}
           {link && <ArrowUpRight className="h-3.5 w-3.5 text-slate-400 opacity-0 transition group-hover:opacity-100" />}
         </div>
       </div>
+      {info && <ServiceInfoBlock info={info} />}
       {health && open && (
         <div className="mt-3 animate-fade-in rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] text-slate-300">
           <div className="flex items-center justify-between">
@@ -1032,7 +829,121 @@ function EmptyState() {
   );
 }
 
-// ────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────────────────────────────
+// Service info block — shows live stats from the service API on tile cards.
+
+const INFO_LABELS: Record<string, string> = {
+  version: "Version",
+  uptime: "Uptime",
+  download_speed: "DL Speed",
+  upload_speed: "UL Speed",
+  torrent_count: "Torrents",
+  queue_length: "Queue",
+  queue_size_mb: "Queue Size",
+  total_downloaded: "Downloaded",
+  domains_blocked: "Blocked",
+  dns_queries_today: "Queries",
+  ads_blocked_today: "Ads Blocked",
+  ads_percentage_today: "Block %",
+  dns_queries: "Queries",
+  blocked_filtering: "Blocked",
+  percent_blocked: "Block %",
+  proxy_hosts: "Hosts",
+  up: "Up",
+  down: "Down",
+  paused: "Paused",
+  entities: "Entities",
+  lights_on: "Lights",
+  switches_on: "Switches",
+  dashboards: "Dashboards",
+  users: "Users",
+  orgs: "Orgs",
+  active_series: "Series",
+  endpoints: "Endpoints",
+  running: "Running",
+  stopped: "Stopped",
+  pending: "Pending",
+  approved: "Approved",
+  declined: "Declined",
+  hostname: "Hostname",
+  load_average: "Load",
+  server_name: "Server",
+  username: "User",
+  documents: "Docs",
+  cpu_usage: "CPU",
+  mem_usage: "Mem",
+  array_state: "Array",
+  model: "Model",
+  ram: "RAM",
+  temperature: "Temp",
+  friendly_name: "Name",
+  state: "State",
+  entity_id: "Entity",
+};
+
+function formatBytes(b: number): string {
+  if (!b || b < 1) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(b) / Math.log(1024));
+  return (b / Math.pow(1024, i)).toFixed(1) + " " + units[i];
+}
+
+function formatInfoValue(key: string, val: unknown): string {
+  if (val === undefined || val === null) return "—";
+  if (typeof val === "boolean") return val ? "Yes" : "No";
+  if (typeof val === "number") {
+    if (key.endsWith("_speed") || key === "download_speed" || key === "upload_speed") {
+      return formatBytes(val) + "/s";
+    }
+    if (key === "uptime") return formatUptime(val);
+    if (key === "ads_percentage_today" || key === "percent_blocked") return val + "%";
+    if (key === "queue_size_mb") return val.toFixed(1) + " MB";
+    if (key === "temperature") return val + "°C";
+    return String(val);
+  }
+  return String(val);
+}
+
+function ServiceInfoBlock({ info }: { info: ServiceInfo }) {
+  if (!info || info.error) {
+    if (info?.error) {
+      return (
+        <div className="mt-3 flex items-center gap-1.5 rounded-lg border border-amber-400/20 bg-amber-400/5 p-2 text-[10px] text-amber-300">
+          <AlertTriangle className="h-3 w-3 shrink-0" />
+          <span className="truncate">{info.error}</span>
+        </div>
+      );
+    }
+    return null;
+  }
+
+  // Filter out internal keys and object values
+  const entries = Object.entries(info).filter(
+    ([k, v]) => k !== "widget_type" && k !== "error" && k !== "domains" && typeof v !== "object"
+  );
+
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="mt-3 animate-fade-in rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-2 text-[10px] text-slate-300">
+      <div className="mb-1 flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-cyan-300">
+        ✧ {info.widget_type}
+      </div>
+      <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+        {entries.slice(0, 6).map(([key, val]) => (
+          <div key={key} className="flex items-center justify-between gap-1">
+            <span className="text-slate-500">{INFO_LABELS[key] || key}</span>
+            <span className="font-medium tabular-nums text-slate-200">
+              {formatInfoValue(key, val)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Small helpers.
 // ────────────────────────────────────────────────────────────────────────
 

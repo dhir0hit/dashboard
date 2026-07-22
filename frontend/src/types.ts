@@ -88,6 +88,16 @@ export interface TileLoginResponse {
   message: string;
 }
 
+// Service info — live stats fetched from the service's own API via the
+// backend's GET /api/tiles/{id}/info endpoint. The returned dict is
+// widget-specific (e.g. sonarr returns version + uptime, qBittorrent
+// returns download/upload speeds, Pi-hole returns DNS queries, etc.).
+export interface ServiceInfo {
+  widget_type: string;
+  error?: string;
+  [key: string]: string | number | boolean | object | undefined;
+}
+
 export interface BackgroundSettings {
   mode: "none" | "gradient" | "particles" | "wallpaper";
   effects_enabled: boolean;

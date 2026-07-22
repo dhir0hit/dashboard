@@ -61,7 +61,7 @@ from .schemas import (
     WallpaperItem,
 )
 from .wallpapers import list_all as list_wallpapers, respond as wallpaper_file, save_upload
-from .widgets import get_widget, list_widgets
+from .widgets import fetch_tile_info, get_widget, list_widgets
 
 log = logging.getLogger("dashboard")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -613,10 +613,7 @@ def list_cron() -> CronListResponse:
 
 
 # ------------------------------------------------------------- widgets
-# Widget registry + auto-login. POST /api/tiles/{id}/auth performs the service's
-# login API call server-side using the credentials stored on the tile, then
-# returns the cookies/token the user's browser needs so the click-through tile
-# link opens an already-authenticated session.
+# Widget registry + per-tile service info.
 
 @app.get(
     "/api/widgets",
@@ -641,31 +638,26 @@ def widgets_get(widget_id: str) -> dict:
     return w
 
 
-def _normalize_base(url: str) -> str:
-    u = url.rstrip("/")
-    return u if u else url
-
-
-@app.post(
-    "/api/tiles/{service_id}/auth",
+@app.get(
+    "/api/tiles/{service_id}/info",
     tags=["tiles"],
-    summary="Perform the underlying service's login on behalf of the user",
+    summary="Fetch live stats/info from the underlying service API",
 )
-def tile_login(service_id: str):
-    """Server-side login for a tile.
+def tile_info(service_id: str) -> dict:
+    """Call the tile's service API and return parsed stats.
 
-    Loads the tile by id from the SQLite config, looks up its widget_type in the
-    registry, and performs the appropriate login call against api_url using the
-    stored credentials. Returns either a list of cookie strings that the
-    frontend should set via `document.cookie` before redirecting, or a custom
-    authorization header the frontend should pass when opening the tile URL.
+    Loads the tile by id from the SQLite config, looks up its widget_type in
+    the info registry, and performs a GET request to the service's info
+    endpoint using the stored credentials. Returns a dict of parsed stats
+    (widget-specific: downloads, queries, version, etc.).
 
     Responses:
-        200 — `{method, cookies?, header?, redirect_url, message}` on success.
-        400 — widget_type missing, no api_url, or unsupported auth_schema.
+        200 — service stats dict (widget-specific fields + `widget_type`).
         404 — tile id unknown.
-        502 — upstream service unreachable or non-2xx login response.
+        400 — tile has no widget_type or the widget doesn't support info.
     """
+    from .widgets import fetch_tile_info
+
     s = get_settings()
     cfg = latest(s.config_db) or DashboardConfig()
     entry = next((e for e in cfg.services if e.id == service_id), None)
@@ -674,83 +666,13 @@ def tile_login(service_id: str):
     if not entry.widget_type:
         raise HTTPException(
             status_code=400,
-            detail="tile has no widget_type; nothing to auto-login to",
+            detail="tile has no widget_type; no info to fetch",
         )
-    widget = get_widget(entry.widget_type)
-    if widget is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"unknown widget_type: {entry.widget_type}",
-        )
-    base_url = _normalize_base(entry.api_url or entry.url or "")
-    if not base_url:
-        raise HTTPException(status_code=400, detail="tile has no api_url or url to log in to")
-    schema = widget.get("auth_schema", "none")
-    if schema == "none":
-        return {"method": "none", "redirect_url": base_url, "message": "no auth needed"}
-
-    login_path = widget.get("login_path") or ""
-    target = f"{base_url}{login_path}"
-
-    try:
-        if schema == "api_key":
-            if not entry.api_key:
-                raise HTTPException(status_code=400, detail="api_key required for this widget")
-            header_fmt = widget.get("auth_header_format") or "Bearer {token}"
-            header_value = header_fmt.replace("{token}", entry.api_key)
-            # Split into header name/value if the template includes a colon
-            # (e.g. "X-Api-Key: abc"), else synthesize Authorization.
-            if ":" in header_fmt and not header_fmt.startswith("Bearer"):
-                name, _, value = header_value.partition(":")
-                headers = {name.strip(): value.strip()}
-            else:
-                headers = {"Authorization": header_value}
-            resp = httpx.post(target, headers=headers, timeout=10.0)
-        elif schema == "basic":
-            if not entry.username or entry.password is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail="username + password required for this widget",
-                )
-            resp = httpx.post(
-                target,
-                auth=(entry.username, entry.password),
-                timeout=10.0,
-            )
-        elif schema == "form":
-            if not entry.username or entry.password is None:
-                raise HTTPException(
-                    status_code=400,
-                    detail="username + password required for this widget",
-                )
-            template = widget.get("login_form_template") or "username={username}&password={password}"
-            body = template.format(username=entry.username, password=entry.password)
-            resp = httpx.post(
-                target,
-                data=body,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-                timeout=10.0,
-            )
-        else:
-            raise HTTPException(status_code=400, detail=f"unsupported auth_schema: {schema}")
-    except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"login upstream error: {e}") from e
-
-    if resp.status_code >= 400:
-        raise HTTPException(
-            status_code=502,
-            detail=f"login failed: upstream returned {resp.status_code}: {resp.text[:200]}",
-        )
-
-    # Pull Set-Cookie headers (may be multiple). The browser will set these
-    # via document.cookie on the response handler.
-    cookies = resp.headers.get_list("Set-Cookie") if hasattr(resp.headers, "get_list") else []
-    return {
-        "method": schema,
-        "cookies": cookies,
-        "redirect_url": base_url,
-        "message": f"logged in via {schema}",
-    }
+    result = fetch_tile_info(entry)
+    if "error" in result and len(result) == 2:
+        # Non-fatal error — return 200 with error field so frontend can display it
+        pass
+    return result
 
 
 # ------------------------------------------------------------- health root

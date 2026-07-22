@@ -13,7 +13,7 @@ import {
   ServiceHealth,
   ServicesResponse,
   ThemeDefinition,
-  TileLoginResponse,
+  ServiceInfo,
   WidgetDefinition,
 } from "./types";
 
@@ -238,12 +238,16 @@ export const api = {
     return jsonOrThrow(res);
   },
 
-  async tileLogin(tileId: string): Promise<TileLoginResponse> {
-    const res = await fetch(`${API_BASE}/api/tiles/${encodeURIComponent(tileId)}/auth`, {
-      method: "POST",
-      headers: { Accept: "application/json" },
-    });
-    return jsonOrThrow(res);
+  async getTileInfo(tileId: string): Promise<ServiceInfo> {
+    try {
+      const res = await fetch(`${API_BASE}/api/tiles/${encodeURIComponent(tileId)}/info`, {
+        headers: { Accept: "application/json" },
+      });
+      if (res.status === 400 || res.status === 404) return { widget_type: "" };
+      return jsonOrThrow<ServiceInfo>(res);
+    } catch {
+      return { widget_type: "" };
+    }
   },
 
   // ─────────────────────────────────────────────────────────────────────
