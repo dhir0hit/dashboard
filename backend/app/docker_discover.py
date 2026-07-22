@@ -102,7 +102,7 @@ def _status_from(status_str: str) -> ServiceStatus:
 
 # --- exec backends ---------------------------------------------------------
 _DOCKER_PS_FORMAT = (
-    "{{.Name}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\t{{.Labels}}"
+    "{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\t{{.Labels}}"
 )
 
 
@@ -209,12 +209,13 @@ def _rows_to_services(
     services: list[Service] = []
     for row in _parse_ps(stdout):
         status = _status_from(row.status)
+        kind_str = kind.value if hasattr(kind, "value") else kind
         svc = Service(
-            id=f"{node}-{kind.value}-{vmid}-docker-{row.name}",
+            id=f"{node}-{kind_str}-{vmid}-docker-{row.name}",
             name=row.name,
             node=node,
             vmid=vmid,
-            kind=kind,
+            kind=ContainerKind(kind) if isinstance(kind, str) else kind,
             status=status,
             image=row.image,
             ports=_parse_ports(row.ports),

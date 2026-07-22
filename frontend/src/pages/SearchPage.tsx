@@ -1,8 +1,17 @@
-// Root-task (t_c8aa6b03): DuckDuckGo web search page.
+// Root-task (t_c8aa6b03): DuckDuckGo web search page with bookmarks.
 // Front-end shell that talks to the backend /api/search proxy (CORS-free).
+// Each search result has an "Add to bookmarks" button that saves the link
+// to the backend via /api/config/bookmarks.
 
 import { FormEvent, useState } from "react";
-import { Search as SearchIcon, ExternalLink, Loader2, AlertTriangle } from "lucide-react";
+import {
+  Search as SearchIcon,
+  ExternalLink,
+  Loader2,
+  AlertTriangle,
+  Bookmark as BookmarkIcon,
+  Check,
+} from "lucide-react";
 import clsx from "clsx";
 import { api } from "../api";
 import type { SearchResponse } from "../types";
@@ -13,6 +22,9 @@ export function SearchPage() {
   const [data, setData] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Track which result indices have been bookmarked (by URL)
+  const [bookmarked, setBookmarked] = useState<Set<string>>(new Set());
+  const [bookmarking, setBookmarking] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -30,6 +42,23 @@ export function SearchPage() {
     }
   }
 
+  async function addToBookmarks(url: string, title: string) {
+    setBookmarking(url);
+    try {
+      await api.addBookmark({
+        title: title,
+        url: url,
+        category: "search",
+        icon: undefined,
+      });
+      setBookmarked((prev) => new Set(prev).add(url));
+    } catch {
+      // ignore — the button just stays in its default state
+    } finally {
+      setBookmarking(null);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-3xl">
       <header className="mb-6">
@@ -38,6 +67,7 @@ export function SearchPage() {
         </h1>
         <p className="mt-1 text-sm text-slate-400">
           DuckDuckGo private search, proxied through your backend. No tracking, no ads.
+          Click the bookmark icon on any result to save it.
         </p>
       </header>
 
@@ -88,17 +118,14 @@ export function SearchPage() {
           {data.results.map((r, i) => {
             let host = "";
             try { host = new URL(r.url).hostname.replace(/^www\./, ""); } catch { /* ignore */ }
+            const isBookmarked = bookmarked.has(r.url);
+            const isBookmarking = bookmarking === r.url;
             return (
               <li
                 key={i}
                 className="group rounded-lg border border-white/5 bg-slate-900/40 p-4 transition hover:border-cyan-500/30 hover:bg-slate-900/60"
               >
-                <a
-                  href={r.url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="flex items-start gap-3"
-                >
+                <div className="flex items-start gap-3">
                   {r.favicon && (
                     <img
                       src={r.favicon}
@@ -108,13 +135,42 @@ export function SearchPage() {
                     />
                   )}
                   <div className="min-w-0 flex-1">
-                    <div className="font-medium text-cyan-300 group-hover:text-cyan-200 truncate">
+                    <a
+                      href={r.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="font-medium text-cyan-300 group-hover:text-cyan-200 truncate block"
+                    >
                       {r.title}
-                    </div>
+                    </a>
                     <div className="mt-0.5 text-xs text-slate-500 truncate">{host}</div>
                   </div>
+                  {/* Add to bookmarks button */}
+                  <button
+                    type="button"
+                    onClick={() => !isBookmarked && !isBookmarking && addToBookmarks(r.url, r.title || host)}
+                    disabled={isBookmarked || isBookmarking}
+                    className={clsx(
+                      "flex-shrink-0 rounded-md p-1.5 text-xs font-medium transition",
+                      isBookmarked
+                        ? "text-emerald-300 opacity-100"
+                        : isBookmarking
+                        ? "text-slate-400 opacity-60"
+                        : "text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-cyan-500/10 hover:text-cyan-300"
+                    )}
+                    title={isBookmarked ? "Bookmarked!" : "Add to bookmarks"}
+                    aria-label={isBookmarked ? "Bookmarked" : "Add to bookmarks"}
+                  >
+                    {isBookmarking ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : isBookmarked ? (
+                      <Check className="h-4 w-4" />
+                    ) : (
+                      <BookmarkIcon className="h-4 w-4" />
+                    )}
+                  </button>
                   <ExternalLink className="h-4 w-4 flex-shrink-0 text-slate-500 opacity-0 group-hover:opacity-100" />
-                </a>
+                </div>
               </li>
             );
           })}

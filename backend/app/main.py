@@ -132,11 +132,22 @@ def get_services() -> ServicesResponse:
     s = get_settings()
     if s.mock:
         return ServicesResponse(services=MOCK_SERVICES, source="mock", count=len(MOCK_SERVICES))
+    # If no Proxmox token, try direct Docker socket discovery (no PVE needed).
     if not s.proxmox_api_token:
-        raise HTTPException(
-            status_code=401,
-            detail="PROXMOX_API_TOKEN not set; set MOCK=true for local development",
-        )
+        try:
+            from .docker_discover import discover_docker_services, hostname_to_node
+            from .schemas import ContainerKind
+            node = hostname_to_node()
+            svcs = discover_docker_services(s, node, 0, ContainerKind.LXC)
+            if svcs:
+                return ServicesResponse(services=svcs, source=f"docker:{node}", count=len(svcs))
+            return ServicesResponse(services=[], source="docker:empty", count=0)
+        except Exception as e:
+            log.warning("direct docker discovery failed: %s", e)
+            raise HTTPException(
+                status_code=401,
+                detail="No Proxmox token and Docker discovery failed. Set MOCK=true or provide PROXMOX_API_TOKEN.",
+            )
     try:
         services, source = _gather_real_services()
     except ProxmoxAuthError as e:
@@ -161,7 +172,14 @@ def get_service_health(service_id: str) -> HealthResponse:
 
     # Real mode: fetch fresh service list and report health for the requested id.
     try:
-        services, _ = _gather_real_services()
+        if s.proxmox_api_token:
+            services, _ = _gather_real_services()
+        else:
+            # Direct Docker discovery (no Proxmox)
+            from .docker_discover import discover_docker_services, hostname_to_node
+            from .schemas import ContainerKind
+            node = hostname_to_node()
+            services = discover_docker_services(s, node, 0, ContainerKind.LXC)
     except ProxmoxAuthError as e:
         raise HTTPException(status_code=401, detail=f"proxmox auth failed: {e}") from e
     except ProxmoxError as e:
