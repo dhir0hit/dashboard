@@ -230,6 +230,7 @@ export interface SearchResponse {
 
 export interface DashboardConfig {
   services: ServiceEntry[];
+  category_order: string[];  // user-defined category display order
   background: BackgroundSettings;
   theme: ThemeSettings;
   bookmarks: Bookmark[];
@@ -239,6 +240,7 @@ export interface DashboardConfig {
 
 export const DEFAULT_CONFIG: DashboardConfig = {
   services: [],
+  category_order: [],
   background: {
     mode: "gradient",
     effects_enabled: true,

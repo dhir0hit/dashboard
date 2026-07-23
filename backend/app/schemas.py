@@ -173,6 +173,7 @@ class DashboardConfig(BaseModel):
 
     # Settings-page overlay (additive — older clients ignore these).
     services: list[ServiceEntry] = Field(default_factory=list)
+    category_order: list[str] = Field(default_factory=list)  # user-defined category display order
     background: BackgroundSettings = Field(default_factory=BackgroundSettings)
     theme: ThemeSettings = Field(default_factory=ThemeSettings)
     # Root-task (t_c8aa6b03) additions: bookmarks page + custom themes.

@@ -16,6 +16,7 @@ interface SettingsState {
   updateService: (id: string, patch: Partial<ServiceEntry>) => Promise<void>;
   deleteService: (id: string) => Promise<void>;
   reorderServices: (orderedIds: string[]) => Promise<void>;
+  setCategoryOrder: (categoryOrder: string[]) => Promise<void>;
   setBackground: (patch: Partial<DashboardConfig["background"]>) => Promise<void>;
   setTheme: (patch: Partial<DashboardConfig["theme"]>) => Promise<void>;
   uploadWallpaper: (file: File) => Promise<string>;
@@ -102,6 +103,12 @@ export const useSettings = create<SettingsState>((set, get) => ({
       if (!orderedIds.includes(s.id)) reordered.push(s);
     }
     const next: DashboardConfig = { ...get().config, services: reordered };
+    set({ config: next });
+    await get().persist(next);
+  },
+
+  setCategoryOrder: async (categoryOrder) => {
+    const next: DashboardConfig = { ...get().config, category_order: categoryOrder };
     set({ config: next });
     await get().persist(next);
   },

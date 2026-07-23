@@ -39,7 +39,7 @@ import { api } from "../api";
 import type { ServiceEntry, WidgetDefinition, WidgetAuthSchema } from "../types";
 
 export function SettingsPage() {
-  const { config, status, error, load, addService, updateService, deleteService, reorderServices } =
+  const { config, status, error, load, addService, updateService, deleteService, reorderServices, setCategoryOrder } =
     useSettings();
 
   useEffect(() => {
@@ -60,10 +60,12 @@ export function SettingsPage() {
 
       <TilesSection
         services={config.services}
+        categoryOrder={config.category_order}
         onAdd={addService}
         onUpdate={updateService}
         onDelete={deleteService}
         onReorder={reorderServices}
+        onSetCategoryOrder={setCategoryOrder}
       />
 
       <BackgroundSection />
@@ -111,16 +113,20 @@ function StatusPill({ status, error }: { status: string; error: string | null })
 
 function TilesSection({
   services,
+  categoryOrder: categoryOrderProp,
   onAdd,
   onUpdate,
   onDelete,
   onReorder,
+  onSetCategoryOrder,
 }: {
   services: ServiceEntry[];
+  categoryOrder: string[];
   onAdd: (entry: Omit<ServiceEntry, "id" | "display_order">) => Promise<void>;
   onUpdate: (id: string, patch: Partial<ServiceEntry>) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onReorder: (orderedIds: string[]) => Promise<void>;
+  onSetCategoryOrder: (categoryOrder: string[]) => Promise<void>;
 }) {
   const [showAdd, setShowAdd] = useState(false);
 
@@ -131,7 +137,8 @@ function TilesSection({
 
   // Group tiles by category (uncategorized go to "Uncategorized", shown last).
   // categoryOrder tracks the user's preferred display order of categories.
-  const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
+  // categoryOrder is persisted to the backend so the Home page follows the same order.
+  const categoryOrder = categoryOrderProp;
 
   const groupedByCategory = useMemo(() => {
     const groups = new Map<string, typeof sorted>();
@@ -149,8 +156,8 @@ function TilesSection({
       // Ensure "Uncategorized" is always last
       const withoutUncat = updated.filter((c) => c !== "Uncategorized");
       if (allCats.includes("Uncategorized")) withoutUncat.push("Uncategorized");
-      // Defer setstate to avoid render loop
-      setTimeout(() => setCategoryOrder(withoutUncat), 0);
+      // Defer persist to avoid render loop
+      setTimeout(() => onSetCategoryOrder(withoutUncat), 0);
       return withoutUncat.map((c) => ({ category: c, items: groups.get(c)! })).filter((g) => g.items.length > 0);
     }
     const ordered = categoryOrder.filter((c) => allCats.includes(c));
@@ -162,20 +169,20 @@ function TilesSection({
       }
     }
     return ordered.map((c) => ({ category: c, items: groups.get(c)! })).filter((g) => g.items.length > 0);
-  }, [sorted, categoryOrder]);
+  }, [sorted, categoryOrder, onSetCategoryOrder]);
 
   function moveCategoryUp(idx: number) {
     if (idx <= 0) return;
     const next = [...categoryOrder];
     [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
-    setCategoryOrder(next);
+    void onSetCategoryOrder(next);
   }
 
   function moveCategoryDown(idx: number) {
     if (idx >= categoryOrder.length - 1) return;
     const next = [...categoryOrder];
     [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
-    setCategoryOrder(next);
+    void onSetCategoryOrder(next);
   }
 
   const sensors = useSensors(

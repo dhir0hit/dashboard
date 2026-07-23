@@ -40,6 +40,7 @@ export const api = {
       // fill gaps when the server omitted those keys (TS2783 safe).
       return {
         services: cfg.services ?? [],
+        category_order: cfg.category_order ?? [],
         background: {
           ...cfg.background,
           effects_enabled: cfg.background?.effects_enabled ?? true,

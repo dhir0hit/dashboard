@@ -81,9 +81,16 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
   }, [loadDiscovery]);
 
   // --- overlay discovered status onto user tiles ------------------------
+  // Build lookup maps: one by discovered service id, one by container name.
   const byContainerId = useMemo(() => {
     const m = new Map<string, DiscoveredService>();
     for (const s of discovery?.services ?? []) m.set(s.id, s);
+    return m;
+  }, [discovery]);
+
+  const byContainerName = useMemo(() => {
+    const m = new Map<string, DiscoveredService>();
+    for (const s of discovery?.services ?? []) m.set(s.name.toLowerCase(), s);
     return m;
   }, [discovery]);
 
@@ -103,15 +110,22 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
       (a, b) => a.display_order - b.display_order
     );
     return sorted.map((entry) => {
-      const discovered = entry.container_id
+      // Match by container_id first, then by container_name (case-insensitive)
+      let discovered = entry.container_id
         ? byContainerId.get(entry.container_id)
         : undefined;
-      const health = entry.container_id ? healthById[entry.container_id] : undefined;
+      if (!discovered && entry.container_name) {
+        discovered = byContainerName.get(entry.container_name.toLowerCase());
+      }
+      // Health is keyed by the discovered service id. If we matched by
+      // container_name, use the discovered service's id for the lookup.
+      const healthKey = entry.container_id || discovered?.id || "";
+      const health = healthKey ? healthById[healthKey] : undefined;
       const effectiveStatus: ServiceStatus =
         health?.status ?? discovered?.status ?? "unknown";
       return { entry, discovered, health, effectiveStatus };
     });
-  }, [config.services, byContainerId, healthById]);
+  }, [config.services, byContainerId, byContainerName, healthById]);
 
   // After ping results arrive, override effective status for tiles that
   // don't have Docker health. Ping-reachable = running, not = stopped.
@@ -148,26 +162,40 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
           : "Unlinked");
       buckets.set(key, [...(buckets.get(key) ?? []), t]);
     }
-    // Sort: Uncategorized/Unlinked goes last
+    // Sort by user-defined category_order (from settings), then alphabetically
+    // for any categories not in the order list. "Unlinked" always goes last.
+    const order = config.category_order ?? [];
     return [...buckets.entries()].sort((a, b) => {
-      if (a[0] === "Unlinked" && b[0] !== "Unlinked") return 1;
-      if (b[0] === "Unlinked" && a[0] !== "Unlinked") return -1;
-      return a[0].localeCompare(b[0]);
+      const aKey = a[0], bKey = b[0];
+      if (aKey === "Unlinked" && bKey !== "Unlinked") return 1;
+      if (bKey === "Unlinked" && aKey !== "Unlinked") return -1;
+      const aIdx = order.indexOf(aKey);
+      const bIdx = order.indexOf(bKey);
+      if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+      if (aIdx !== -1) return -1;
+      if (bIdx !== -1) return 1;
+      return aKey.localeCompare(bKey);
     });
-  }, [tilesWithPing, filter, query]);
+  }, [tilesWithPing, filter, query, config.category_order]);
 
   // --- unlinked discovered services ---------------------------------------
-  // Discovered services that no user tile has claimed via `container_id`.
-  // Rendered in their own section below user tiles so the dashboard isn't
-  // empty in mock mode (and real-mode users see what's available to link).
+  // Discovered services that no user tile has claimed via `container_id` or
+  // `container_name`. Rendered in their own section below user tiles so the
+  // dashboard isn't empty in mock mode (and real-mode users see what's
+  // available to link).
   const unlinkedTiles: Tile[] = useMemo(() => {
     const linkedIds = new Set(
       config.services
         .map((s) => s.container_id)
         .filter((id): id is string => !!id)
     );
+    const linkedNames = new Set(
+      config.services
+        .map((s) => s.container_name?.toLowerCase())
+        .filter((n): n is string => !!n)
+    );
     return (discovery?.services ?? [])
-      .filter((s) => !linkedIds.has(s.id))
+      .filter((s) => !linkedIds.has(s.id) && !linkedNames.has(s.name.toLowerCase()))
       .map((s) => ({
         entry: {
           id: `disc-${s.id}`,
@@ -224,8 +252,15 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
   }, []);
 
   const pollHealth = useCallback(async () => {
+    // Collect the discovered service IDs to poll. For tiles linked by
+    // container_id, use it directly. For tiles linked by container_name
+    // only, resolve the discovered service id via the name lookup map.
     const linked = tiles
-      .map((t) => t.entry.container_id)
+      .map((t) => {
+        if (t.entry.container_id) return t.entry.container_id;
+        if (t.entry.container_name && t.discovered) return t.discovered.id;
+        return undefined;
+      })
       .filter((id): id is string => !!id);
     if (linked.length === 0) return;
     const updates: Record<string, ServiceHealth> = {};
