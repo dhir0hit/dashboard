@@ -15,10 +15,25 @@ body,
 body {
   margin: 0;
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background-color: #050816;
+}
+
+/* Fixed gradient layer — painted once, never repaints on scroll.
+ * This eliminates the horizontal "lines" / banding that appeared when
+ * scrolling on any page (the body gradient was scrolling with content
+ * and being recomputed at every scroll position). */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background:
     radial-gradient(1200px 600px at 10% -10%, rgba(34, 211, 238, 0.12), transparent 60%),
     radial-gradient(1000px 500px at 110% 10%, rgba(232, 121, 249, 0.10), transparent 55%),
     #050816;
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 @layer components {
@@ -103,6 +118,11 @@ body {
   background-size: 300% 300%;
   animation: bgGradientShift 24s ease-in-out infinite;
   filter: saturate(140%) brightness(0.55);
+  /* Promote to its own GPU layer so the animated background never
+   * triggers repaints (banding) during page scroll. */
+  will-change: background-position;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 /* Particle canvas — the HomePage draws drifting dots on it. */
@@ -110,6 +130,8 @@ body {
   display: block;
   width: 100%;
   height: 100%;
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 /* Wallpaper — scaled-cover with a slow Ken-Burns push in. */
@@ -122,6 +144,9 @@ body {
   height: 100%;
   object-fit: cover;
   animation: bgKenBurns 36s ease-in-out infinite alternate;
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
 }
 
 /* Status pulse halo — used by .status-dot-running::after. */
