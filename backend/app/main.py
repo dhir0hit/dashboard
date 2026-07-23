@@ -778,7 +778,7 @@ def tile_ping(service_id: str) -> dict:
     if entry is None:
         raise HTTPException(status_code=404, detail=f"unknown tile id: {service_id}")
 
-    url = (entry.url or "").strip()
+    url = (entry.api_url or entry.url or "").strip()
     if not url:
         return {"reachable": False, "status_code": 0, "response_ms": 0, "message": "no URL configured"}
 
