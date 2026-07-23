@@ -20,12 +20,15 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   Check,
   ChevronDown,
   GripVertical,
   Loader2,
   Pencil,
   Plus,
+  Search,
   Trash2,
   Upload,
   X,
@@ -127,6 +130,9 @@ function TilesSection({
   );
 
   // Group tiles by category (uncategorized go to "Uncategorized", shown last).
+  // categoryOrder tracks the user's preferred display order of categories.
+  const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
+
   const groupedByCategory = useMemo(() => {
     const groups = new Map<string, typeof sorted>();
     for (const s of sorted) {
@@ -134,12 +140,43 @@ function TilesSection({
       if (!groups.has(cat)) groups.set(cat, []);
       groups.get(cat)!.push(s);
     }
-    return [...groups.entries()].sort((a, b) => {
-      if (a[0] === "Uncategorized") return 1;
-      if (b[0] === "Uncategorized") return -1;
-      return a[0].localeCompare(b[0]);
-    }).map(([category, items]) => ({ category, items }));
-  }, [sorted]);
+    const allCats = [...groups.keys()];
+    // Sync categoryOrder with actual categories
+    const known = new Set(categoryOrder);
+    const newCats = allCats.filter((c) => !known.has(c));
+    if (newCats.length > 0) {
+      const updated = [...categoryOrder.filter((c) => allCats.includes(c)), ...newCats];
+      // Ensure "Uncategorized" is always last
+      const withoutUncat = updated.filter((c) => c !== "Uncategorized");
+      if (allCats.includes("Uncategorized")) withoutUncat.push("Uncategorized");
+      // Defer setstate to avoid render loop
+      setTimeout(() => setCategoryOrder(withoutUncat), 0);
+      return withoutUncat.map((c) => ({ category: c, items: groups.get(c)! })).filter((g) => g.items.length > 0);
+    }
+    const ordered = categoryOrder.filter((c) => allCats.includes(c));
+    // Append any missing cats
+    for (const c of allCats) {
+      if (!ordered.includes(c)) {
+        if (c === "Uncategorized") ordered.push(c);
+        else ordered.splice(ordered.length - (ordered.includes("Uncategorized") ? 1 : 0), 0, c);
+      }
+    }
+    return ordered.map((c) => ({ category: c, items: groups.get(c)! })).filter((g) => g.items.length > 0);
+  }, [sorted, categoryOrder]);
+
+  function moveCategoryUp(idx: number) {
+    if (idx <= 0) return;
+    const next = [...categoryOrder];
+    [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+    setCategoryOrder(next);
+  }
+
+  function moveCategoryDown(idx: number) {
+    if (idx >= categoryOrder.length - 1) return;
+    const next = [...categoryOrder];
+    [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+    setCategoryOrder(next);
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -204,7 +241,7 @@ function TilesSection({
             strategy={verticalListSortingStrategy}
           >
             <div className="mt-4 space-y-4">
-              {groupedByCategory.map(({ category, items }) => (
+              {groupedByCategory.map(({ category, items }, idx) => (
                 <div key={category}>
                   <div className="mb-2 flex items-center gap-2">
                     <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -214,6 +251,26 @@ function TilesSection({
                       {items.length}
                     </span>
                     <div className="ml-2 h-px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => moveCategoryUp(idx)}
+                        disabled={idx === 0}
+                        className="rounded p-1 text-slate-400 transition hover:bg-white/10 hover:text-white disabled:opacity-20"
+                        title="Move category up"
+                      >
+                        <ArrowUp className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveCategoryDown(idx)}
+                        disabled={idx === groupedByCategory.length - 1}
+                        className="rounded p-1 text-slate-400 transition hover:bg-white/10 hover:text-white disabled:opacity-20"
+                        title="Move category down"
+                      >
+                        <ArrowDown className="h-3 w-3" />
+                      </button>
+                    </div>
                   </div>
                   <ul className="space-y-2">
                     {items.map((s) => (
@@ -367,6 +424,7 @@ interface FormState {
   icon: string;
   icon_url: string;
   container_id: string;
+  container_name: string;
   widget_type: string;
   api_url: string;
   api_key: string;
@@ -397,6 +455,7 @@ function ServiceForm({
     icon: initial?.icon ?? "",
     icon_url: initial?.icon_url ?? "",
     container_id: initial?.container_id ?? "",
+    container_name: initial?.container_name ?? "",
     widget_type: initial?.widget_type ?? "generic",
     api_url: initial?.api_url ?? "",
     api_key: initial?.api_key ?? "",
@@ -405,6 +464,7 @@ function ServiceForm({
     category: initial?.category ?? "",
   });
   const [submitting, setSubmitting] = useState(false);
+  const [fetchingIcon, setFetchingIcon] = useState(false);
 
   const selectedWidget = widgets.find((w) => w.id === form.widget_type);
   const authSchema: WidgetAuthSchema = selectedWidget?.auth_schema ?? "none";
@@ -420,6 +480,7 @@ function ServiceForm({
         icon: form.icon.trim() || undefined,
         icon_url: form.icon_url.trim() || undefined,
         container_id: form.container_id.trim() || undefined,
+        container_name: form.container_name.trim() || undefined,
         widget_type: form.widget_type && form.widget_type !== "generic" ? form.widget_type : undefined,
         api_url: form.api_url.trim() || undefined,
         api_key: authSchema === "api_key" ? (form.api_key || undefined) : undefined,
@@ -490,14 +551,36 @@ function ServiceForm({
       </div>
       <div>
         <label className="label">Icon URL (overrides emoji)</label>
-        <input
-          className="input"
-          value={form.icon_url}
-          onChange={(e) => setForm({ ...form, icon_url: e.target.value })}
-          placeholder="https://example.com/sonarr.svg"
-        />
+        <div className="flex gap-2">
+          <input
+            className="input flex-1"
+            value={form.icon_url}
+            onChange={(e) => setForm({ ...form, icon_url: e.target.value })}
+            placeholder="https://example.com/sonarr.svg"
+          />
+          <button
+            type="button"
+            onClick={async () => {
+              if (!form.url.trim()) return;
+              setFetchingIcon(true);
+              try {
+                const { icon_url } = await api.autoIcon(form.url.trim());
+                if (icon_url) setForm({ ...form, icon_url });
+              } finally {
+                setFetchingIcon(false);
+              }
+            }}
+            disabled={!form.url.trim() || fetchingIcon}
+            className="btn-ghost shrink-0 px-3"
+            title="Auto-detect favicon from the URL"
+          >
+            {fetchingIcon ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            Auto
+          </button>
+        </div>
         <p className="mt-1 text-[11px] text-slate-500">
-          Direct link to a .svg / .png / .jpg icon. Takes priority over the emoji above.
+          Direct link to a .svg / .png / .jpg icon. Click <span className="text-cyan-300">Auto</span> to
+          auto-detect the favicon from the service URL.
         </p>
       </div>
       <div>
@@ -597,6 +680,19 @@ function ServiceForm({
           onChange={(e) => setForm({ ...form, container_id: e.target.value })}
           placeholder="pve-lxc-100-docker-sonarr"
         />
+      </div>
+      <div>
+        <label className="label">Docker container name (optional)</label>
+        <input
+          className="input"
+          value={form.container_name}
+          onChange={(e) => setForm({ ...form, container_name: e.target.value })}
+          placeholder="sonarr"
+        />
+        <p className="mt-1 text-[11px] text-slate-500">
+          The Docker container name (e.g. from <code>docker ps</code>). Used to show
+          container status and connection info on the tile.
+        </p>
       </div>
       <div className="flex items-center justify-end gap-2 sm:col-span-2">
         <button type="button" onClick={onCancel} className="btn-ghost">

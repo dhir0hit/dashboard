@@ -128,7 +128,8 @@ class ServiceEntry(BaseModel):
     url: Optional[str] = None  # click-through URL (also used as api_url fallback)
     icon: Optional[str] = None  # emoji or short hint like "sonarr"
     icon_url: Optional[str] = None  # custom icon URL (.svg/.png/.jpg) — overrides emoji
-    container_id: Optional[str] = None
+    container_id: Optional[str] = None  # discovery-based id (pve-lxc-100-docker-sonarr)
+    container_name: Optional[str] = None  # docker container name for direct connection info
     display_order: int = 0
     # --- Widget integration -------------------------------------------------
     widget_type: Optional[str] = None  # one of WIDGET_REGISTRY keys, or None

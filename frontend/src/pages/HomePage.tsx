@@ -19,6 +19,7 @@ import { api } from "../api";
 import { useSettings } from "../store";
 import type {
   DiscoveredService,
+  PingResult,
   ServiceEntry,
   ServiceHealth,
   ServiceInfo,
@@ -51,6 +52,9 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
 
   // --- service info map (tile_id -> ServiceInfo) ─────────────────────
   const [infoById, setInfoById] = useState<Record<string, ServiceInfo>>({});
+
+  // --- ping map (tile_id -> PingResult) for tiles without container_id ──
+  const [pingById, setPingById] = useState<Record<string, PingResult>>({});
 
   // --- filters ----------------------------------------------------------
   const [query, setQuery] = useState("");
@@ -253,7 +257,33 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
     return () => window.clearInterval(handle);
   }, [pollInfo, intervalMs]);
 
-  // Pass infoById down through TileGrid → TileCard
+  // --- URL ping for tiles without a container_id ─────────────────────
+  // Pings the tile's URL to determine if the service is reachable.
+  // Tiles with container_id get their status from Docker discovery.
+  const pollPings = useCallback(async () => {
+    const pingTiles = tiles.filter(
+      (t) => !t.entry.container_id && !t.entry.container_name && t.entry.url
+    );
+    if (pingTiles.length === 0) return;
+    const updates: Record<string, PingResult> = {};
+    await Promise.all(
+      pingTiles.map(async (t) => {
+        const result = await api.pingTile(t.entry.id);
+        updates[t.entry.id] = result;
+      })
+    );
+    if (mountedRef.current && Object.keys(updates).length) {
+      setPingById((prev) => ({ ...prev, ...updates }));
+    }
+  }, [tiles]);
+
+  useEffect(() => {
+    void pollPings();
+    const handle = window.setInterval(() => void pollPings(), intervalMs * 3);
+    return () => window.clearInterval(handle);
+  }, [pollPings, intervalMs]);
+
+  // Pass infoById + pingById down through TileGrid → TileCard
   // Update TileGrid to accept infoById
 
 
@@ -325,7 +355,7 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
                 </span>
                 <div className="ml-2 h-px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
               </header>
-              <TileGrid items={items} infoById={infoById} />
+              <TileGrid items={items} infoById={infoById} pingById={pingById} />
             </section>
           ))}
 
@@ -340,7 +370,7 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
                 </span>
                 <div className="ml-2 h-px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
               </header>
-              <TileGrid items={unlinkedFiltered} infoById={infoById} />
+              <TileGrid items={unlinkedFiltered} infoById={infoById} pingById={pingById} />
             </section>
           )}
         </div>
@@ -645,6 +675,7 @@ function Filters({
 function TileGrid({
   items,
   infoById = {},
+  pingById = {},
 }: {
   items: {
     entry: ServiceEntry;
@@ -653,6 +684,7 @@ function TileGrid({
     effectiveStatus: ServiceStatus;
   }[];
   infoById?: Record<string, ServiceInfo>;
+  pingById?: Record<string, PingResult>;
 }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
@@ -664,6 +696,7 @@ function TileGrid({
           health={t.health}
           status={t.effectiveStatus}
           info={infoById[t.entry.id]}
+          ping={pingById[t.entry.id]}
         />
       ))}
     </div>
@@ -676,12 +709,14 @@ function TileCard({
   health,
   status,
   info,
+  ping,
 }: {
   entry: ServiceEntry;
   discovered?: DiscoveredService;
   health?: ServiceHealth;
   status: ServiceStatus;
   info?: ServiceInfo;
+  ping?: PingResult;
 }) {
   const icon = entry.icon?.trim() || iconForHint(discovered?.icon_hint);
   const iconUrl = entry.icon_url?.trim();
@@ -749,6 +784,38 @@ function TileCard({
         </div>
       </div>
       {info && <ServiceInfoBlock info={info} />}
+      {ping && !discovered && (
+        <div className={clsx(
+          "mt-3 animate-fade-in rounded-lg border p-2 text-[11px]",
+          ping.reachable
+            ? "border-emerald-400/20 bg-emerald-400/5 text-emerald-300"
+            : "border-rose-400/20 bg-rose-400/5 text-rose-300"
+        )}>
+          <div className="flex items-center justify-between">
+            <span className="opacity-70">{ping.reachable ? "reachable" : "unreachable"}</span>
+            <span className="tabular-nums">{ping.response_ms}ms</span>
+          </div>
+          {ping.status_code > 0 && (
+            <div className="mt-0.5 flex items-center justify-between">
+              <span className="opacity-70">HTTP</span>
+              <span className="tabular-nums">{ping.status_code}</span>
+            </div>
+          )}
+          {ping.message && !ping.reachable && (
+            <div className="mt-0.5 truncate opacity-60" title={ping.message}>
+              {ping.message}
+            </div>
+          )}
+        </div>
+      )}
+      {(entry.container_name || (discovered && entry.container_name)) && (
+        <div className="mt-2 flex items-center gap-1 text-[10px] text-slate-500">
+          <span className="opacity-60">docker:</span>
+          <code className="rounded bg-black/40 px-1 py-0.5 text-cyan-400/80">
+            {entry.container_name || discovered?.name || "—"}
+          </code>
+        </div>
+      )}
       {health && open && (
         <div className="mt-3 animate-fade-in rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] text-slate-300">
           <div className="flex items-center justify-between">

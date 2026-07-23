@@ -250,6 +250,31 @@ export const api = {
     }
   },
 
+  async autoIcon(url: string): Promise<{ icon_url: string | null }> {
+    try {
+      const res = await fetch(`${API_BASE}/api/tiles/auto-icon`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      return jsonOrThrow<{ icon_url: string | null }>(res);
+    } catch {
+      return { icon_url: null };
+    }
+  },
+
+  async pingTile(tileId: string): Promise<{ reachable: boolean; status_code: number; response_ms: number; message: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/api/tiles/${encodeURIComponent(tileId)}/ping`, {
+        headers: { Accept: "application/json" },
+      });
+      if (res.status === 404) return { reachable: false, status_code: 0, response_ms: 0, message: "tile not found" };
+      return jsonOrThrow(res);
+    } catch {
+      return { reachable: false, status_code: 0, response_ms: 0, message: "ping failed" };
+    }
+  },
+
   // ─────────────────────────────────────────────────────────────────────
   // Calendar events (local CRUD + Google sync + Hermes cron).
   // ─────────────────────────────────────────────────────────────────────

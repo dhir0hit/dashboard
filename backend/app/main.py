@@ -693,6 +693,119 @@ def tile_info(service_id: str) -> dict:
     return result
 
 
+# ------------------------------------------------------------- tile helpers
+# Auto-fetch favicon/logo from a service URL + URL ping health check.
+
+@app.post(
+    "/api/tiles/auto-icon",
+    tags=["tiles"],
+    summary="Fetch the favicon/logo URL for a service by probing its URL",
+)
+def auto_icon(body: dict):
+    """Given a URL, try to find the site's favicon or logo.
+
+    Probes `<url>/favicon.ico` first (most universal), then checks the HTML
+    for `<link rel="icon">` or `<link rel="apple-touch-icon">`.  Returns
+    `{"icon_url": "..."}` or `{"icon_url": null}` if nothing found.
+    """
+    url = (body.get("url") or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+    # Normalize: add http:// if missing scheme
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "http://" + url
+    parsed = urlparse(url)
+    base = f"{parsed.scheme}://{parsed.netloc}"
+
+    # 1. Try /favicon.ico directly (works for most sites)
+    favicon_url = f"{base}/favicon.ico"
+    try:
+        resp = httpx.head(favicon_url, timeout=5.0, follow_redirects=True, verify=False)
+        if resp.status_code == 200 and "image" in resp.headers.get("content-type", ""):
+            return {"icon_url": favicon_url}
+    except Exception:
+        pass
+
+    # 2. Try fetching the HTML and parsing <link rel="icon"> tags
+    try:
+        resp = httpx.get(base, timeout=5.0, follow_redirects=True, verify=False,
+                         headers={"User-Agent": "Mozilla/5.0"})
+        # Look for <link rel="icon" href="..."> or rel="shortcut icon"
+        import re as _re
+        patterns = [
+            r"""<link[^>]+rel=["']icon["'][^>]+href=["']([^"']+)["']""",
+            r"""<link[^>]+rel=["']shortcut icon["'][^>]+href=["']([^"']+)["']""",
+            r"""<link[^>]+rel=["']apple-touch-icon["'][^>]+href=["']([^"']+)["']""",
+        ]
+        for pat in patterns:
+            m = _re.search(pat, resp.text, _re.IGNORECASE)
+            if m:
+                href = m.group(1)
+                # Resolve relative URLs
+                if href.startswith("//"):
+                    href = parsed.scheme + ":" + href
+                elif href.startswith("/"):
+                    href = base + href
+                elif not href.startswith("http"):
+                    href = base + "/" + href
+                return {"icon_url": href}
+    except Exception:
+        pass
+
+    # 3. Try Google's favicon service as a fallback
+    return {"icon_url": f"https://icons.duckduckgo.com/ip3/{parsed.netloc}.ico"}
+
+
+@app.get(
+    "/api/tiles/{service_id}/ping",
+    tags=["tiles"],
+    summary="Ping a tile's URL to check if the service is reachable",
+)
+def tile_ping(service_id: str) -> dict:
+    """HTTP HEAD the tile's URL and return status + response time.
+
+    Used by the frontend for tiles that don't have a Docker container_id
+    linked — so the dashboard can still show running/stopped based on
+    whether the service URL responds.
+
+    Returns:
+        200 — `{"reachable": true/false, "status_code": N, "response_ms": N}`
+        404 — tile id unknown.
+    """
+    s = get_settings()
+    cfg = latest(s.config_db) or DashboardConfig()
+    entry = next((e for e in cfg.services if e.id == service_id), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"unknown tile id: {service_id}")
+
+    url = (entry.url or "").strip()
+    if not url:
+        return {"reachable": False, "status_code": 0, "response_ms": 0, "message": "no URL configured"}
+
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "http://" + url
+
+    import time
+    t0 = time.monotonic()
+    try:
+        resp = httpx.head(url, timeout=8.0, follow_redirects=True, verify=False,
+                         headers={"User-Agent": "Dashboard-Ping/1.0"})
+        elapsed = int((time.monotonic() - t0) * 1000)
+        reachable = resp.status_code < 400
+        return {
+            "reachable": reachable,
+            "status_code": resp.status_code,
+            "response_ms": elapsed,
+            "message": "ok" if reachable else f"HTTP {resp.status_code}",
+        }
+    except httpx.ConnectError:
+        return {"reachable": False, "status_code": 0, "response_ms": 0, "message": "connection refused"}
+    except httpx.TimeoutException:
+        return {"reachable": False, "status_code": 0, "response_ms": 8000, "message": "timeout"}
+    except Exception as e:
+        return {"reachable": False, "status_code": 0, "response_ms": 0, "message": str(e)[:100]}
+
+
 # ------------------------------------------------------------- health root
 @app.get("/health", tags=["meta"])
 def root_health() -> dict:

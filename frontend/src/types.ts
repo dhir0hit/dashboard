@@ -53,6 +53,7 @@ export interface ServiceEntry {
   icon?: string;         // emoji or short hint like "sonarr"
   icon_url?: string;     // custom icon URL (.svg/.png/.jpg) — overrides emoji
   container_id?: string; // e.g. "pve-lxc-100-docker-sonarr"
+  container_name?: string; // user-supplied Docker container name for direct connection
   display_order: number;
   // Optional read-only fields surfaced from Proxmox discovery (not editable
   // from the settings page — they come from /api/services).
@@ -96,6 +97,13 @@ export interface ServiceInfo {
   widget_type: string;
   error?: string;
   [key: string]: string | number | boolean | object | undefined;
+}
+
+export interface PingResult {
+  reachable: boolean;
+  status_code: number;
+  response_ms: number;
+  message: string;
 }
 
 export interface BackgroundSettings {
