@@ -263,18 +263,6 @@ export const api = {
     }
   },
 
-  async pingTile(tileId: string): Promise<{ reachable: boolean; status_code: number; response_ms: number; message: string }> {
-    try {
-      const res = await fetch(`${API_BASE}/api/tiles/${encodeURIComponent(tileId)}/ping`, {
-        headers: { Accept: "application/json" },
-      });
-      if (res.status === 404) return { reachable: false, status_code: 0, response_ms: 0, message: "tile not found" };
-      return jsonOrThrow(res);
-    } catch {
-      return { reachable: false, status_code: 0, response_ms: 0, message: "ping failed" };
-    }
-  },
-
   // ─────────────────────────────────────────────────────────────────────
   // Calendar events (local CRUD + Google sync + Hermes cron).
   // ─────────────────────────────────────────────────────────────────────

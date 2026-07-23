@@ -275,13 +275,28 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
   // Docker container_id, the ping result drives the effective status
   // (running/stopped) so the tile card always shows a live dot.
   const pollPings = useCallback(async () => {
+    // Ping directly from the browser — no backend round-trip.
+    // Uses fetch with no-cors mode so the browser doesn't block cross-origin.
+    // We can't read the response status (opaque), but we know it's reachable
+    // if the fetch resolves without throwing.
     const pingTiles = tiles.filter((t) => t.entry.url);
     if (pingTiles.length === 0) return;
     const updates: Record<string, PingResult> = {};
     await Promise.all(
       pingTiles.map(async (t) => {
-        const result = await api.pingTile(t.entry.id);
-        updates[t.entry.id] = result;
+        const url = t.entry.url!.trim();
+        const t0 = performance.now();
+        try {
+          // Try a real fetch first — works for same-origin or CORS-enabled services
+          await fetch(url, { method: "HEAD", mode: "no-cors", redirect: "follow" });
+          const ms = Math.round(performance.now() - t0);
+          // no-cors gives an opaque response — we can't read the status code,
+          // but if the promise resolved, the server is reachable.
+          updates[t.entry.id] = { reachable: true, status_code: 0, response_ms: ms, message: "ok" };
+        } catch {
+          const ms = Math.round(performance.now() - t0);
+          updates[t.entry.id] = { reachable: false, status_code: 0, response_ms: ms, message: "unreachable" };
+        }
       })
     );
     if (mountedRef.current && Object.keys(updates).length) {
