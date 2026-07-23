@@ -113,9 +113,22 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
     });
   }, [config.services, byContainerId, healthById]);
 
+  // After ping results arrive, override effective status for tiles that
+  // don't have Docker health. Ping-reachable = running, not = stopped.
+  const tilesWithPing: Tile[] = useMemo(() => {
+    return tiles.map((t) => {
+      const ping = pingById[t.entry.id];
+      if (ping && !t.health && !t.discovered) {
+        const pingStatus: ServiceStatus = ping.reachable ? "running" : "stopped";
+        return { ...t, effectiveStatus: pingStatus };
+      }
+      return t;
+    });
+  }, [tiles, pingById]);
+
   // --- group tiles by user-assigned category, falling back to discovered host ---
   const groups = useMemo(() => {
-    const filtered = tiles.filter((t) => {
+    const filtered = tilesWithPing.filter((t) => {
       if (filter !== "all" && t.effectiveStatus !== filter) return false;
       if (query.trim()) {
         const q = query.toLowerCase();
@@ -141,7 +154,7 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
       if (b[0] === "Unlinked" && a[0] !== "Unlinked") return -1;
       return a[0].localeCompare(b[0]);
     });
-  }, [tiles, filter, query]);
+  }, [tilesWithPing, filter, query]);
 
   // --- unlinked discovered services ---------------------------------------
   // Discovered services that no user tile has claimed via `container_id`.
@@ -188,15 +201,15 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
       stopped = 0,
       paused = 0,
       unknown = 0;
-    for (const t of [...tiles, ...unlinkedTiles]) {
+    for (const t of [...tilesWithPing, ...unlinkedTiles]) {
       const s = t.effectiveStatus;
       if (s === "running") running++;
       else if (s === "stopped") stopped++;
       else if (s === "paused") paused++;
       else unknown++;
     }
-    return { total: tiles.length + unlinkedTiles.length, running, stopped, paused, unknown };
-  }, [tiles, unlinkedTiles]);
+    return { total: tilesWithPing.length + unlinkedTiles.length, running, stopped, paused, unknown };
+  }, [tilesWithPing, unlinkedTiles]);
 
   // --- health polling ---------------------------------------------------
   // Poll /api/services/{id}/health for every linked tile. We do staggered,
@@ -257,14 +270,12 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
     return () => window.clearInterval(handle);
   }, [pollInfo, intervalMs]);
 
-  // --- URL ping for tiles WITH container_name or container_id ─────────
-  // Pings the tile's URL to determine if the service is reachable.
-  // Only pings tiles where the user filled in container_name or container_id.
-  // Tiles without any Docker info are left alone (no unreachable badge).
+  // --- URL ping for ALL tiles with a URL ────────────────────────────
+  // Pings every tile that has a URL configured. For tiles without a
+  // Docker container_id, the ping result drives the effective status
+  // (running/stopped) so the tile card always shows a live dot.
   const pollPings = useCallback(async () => {
-    const pingTiles = tiles.filter(
-      (t) => (t.entry.container_id || t.entry.container_name) && t.entry.url
-    );
+    const pingTiles = tiles.filter((t) => t.entry.url);
     if (pingTiles.length === 0) return;
     const updates: Record<string, PingResult> = {};
     await Promise.all(
@@ -785,24 +796,13 @@ function TileCard({
         </div>
       </div>
       {info && <ServiceInfoBlock info={info} />}
-      {ping && !discovered && (
-        <div className={clsx(
-          "mt-3 animate-fade-in rounded-lg border p-2 text-[11px]",
-          ping.reachable
-            ? "border-emerald-400/20 bg-emerald-400/5 text-emerald-300"
-            : "border-rose-400/20 bg-rose-400/5 text-rose-300"
-        )}>
+      {ping && !ping.reachable && !discovered && (
+        <div className="mt-3 animate-fade-in rounded-lg border border-rose-400/20 bg-rose-400/5 p-2 text-[11px] text-rose-300">
           <div className="flex items-center justify-between">
-            <span className="opacity-70">{ping.reachable ? "reachable" : "unreachable"}</span>
+            <span className="opacity-70">unreachable</span>
             <span className="tabular-nums">{ping.response_ms}ms</span>
           </div>
-          {ping.status_code > 0 && (
-            <div className="mt-0.5 flex items-center justify-between">
-              <span className="opacity-70">HTTP</span>
-              <span className="tabular-nums">{ping.status_code}</span>
-            </div>
-          )}
-          {ping.message && !ping.reachable && (
+          {ping.message && (
             <div className="mt-0.5 truncate opacity-60" title={ping.message}>
               {ping.message}
             </div>
