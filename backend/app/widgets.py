@@ -1,4 +1,4 @@
-"""Widget registry — known service types the dashboard can auto-login to.
+"""Widget registry — known service types the dashboard can display.
 
 Each widget defines:
 - id: stable identifier used in `ServiceEntry.widget_type`
@@ -317,111 +317,156 @@ def get_widget(widget_type: str | None) -> dict[str, Any] | None:
         return None
     return next((w for w in WIDGET_REGISTRY if w["id"] == widget_type), None)
 
-# ── Service info endpoints ─────────────────────────────────────────────
-# Each widget that supports live data fetching has an `info_endpoint` (path
-# appended to api_url) and an `info_parser` (a function that extracts stats
-# from the JSON response).  The backend's GET /api/tiles/{id}/info route
-# calls the appropriate endpoint with stored credentials and returns the
-# parsed fields to the frontend.
 
-import httpx as _httpx  # type: ignore  # already imported in main
+# ══════════════════════════════════════════════════════════════════════════════
+# SERVICE INFO — live, action-oriented stats from each service's own API.
+#
+# Each parser returns a flat dict of {label_key: value} pairs that the
+# frontend renders in the ServiceInfoBlock.  The keys map to human-readable
+# labels via the INFO_LABELS dict on the frontend.
+#
+# Design principles:
+#   - Show what matters to the user: download/upload speeds, queue depth,
+#     active streams, requests, blocked ads, etc.
+#   - NEVER show version, server name, IDs, or other metadata — those
+#     aren't actionable.
+#   - Keep it to ~4-6 fields so the tile card stays compact.
+# ══════════════════════════════════════════════════════════════════════════════
 
-# ── Info parsers ───────────────────────────────────────────────────────
+import httpx as _httpx
 
-def _arr_stats(resp: dict, _widget: dict) -> dict:
-    """Parse *arr (Sonarr/Radarr/Lidarr/Readarr/Prowlarr) status response."""
-    from datetime import datetime
-    out = {}
-    if "version" in resp:
-        out["version"] = resp["version"]
-    out["startTime"] = resp.get("startTime", "")
-    # compute uptime
-    try:
-        start = datetime.fromisoformat(resp["startTime"].replace("Z", "+00:00"))
-        uptime_s = int((datetime.now(start.tzinfo) - start).total_seconds())
-        out["uptime"] = uptime_s
-    except Exception:
-        pass
+
+# ── *arr stack (Sonarr, Radarr, Lidarr, Readarr) ─────────────────────────────
+
+def _sonarr_info(resp: dict, widget: dict) -> dict:
+    """Sonarr: show missing episodes + queue count + wanted episodes."""
+    out: dict[str, Any] = {}
+    # /api/v3/wanted/missing returns total records
+    if "totalRecords" in resp:
+        out["missing_episodes"] = resp["totalRecords"]
     return out
 
 
+def _radarr_info(resp: dict, widget: dict) -> dict:
+    """Radarr: show missing movies + queue count."""
+    out: dict[str, Any] = {}
+    if "totalRecords" in resp:
+        out["missing_movies"] = resp["totalRecords"]
+    return out
+
+
+def _lidarr_info(resp: dict, widget: dict) -> dict:
+    """Lidarr: show missing albums + artist count + queue."""
+    out: dict[str, Any] = {}
+    if "totalRecords" in resp:
+        out["missing_albums"] = resp["totalRecords"]
+    return out
+
+
+def _readarr_info(resp: dict, widget: dict) -> dict:
+    """Readarr: show missing books + queue."""
+    out: dict[str, Any] = {}
+    if "totalRecords" in resp:
+        out["missing_books"] = resp["totalRecords"]
+    return out
+
+
+def _prowlarr_info(resp: dict, widget: dict) -> dict:
+    """Prowlarr: show indexer count + indexer health."""
+    out: dict[str, Any] = {}
+    if "totalRecords" in resp:
+        out["indexers"] = resp["totalRecords"]
+    return out
+
+
+# ── Download clients ──────────────────────────────────────────────────────────
+
 def _qbittorrent_info(resp: dict, _widget: dict) -> dict:
-    """Parse qBittorrent /api/v2/transfer/info response."""
-    out = {}
-    # resp is { "dl_info": { speed, ... }, "up_info": { ... }, ... }
+    """qBittorrent: show DL/UL speed + active torrents + leech/seeds."""
+    out: dict[str, Any] = {}
     dl = resp.get("dl_info", {})
     up = resp.get("up_info", {})
     out["download_speed"] = dl.get("speed", 0)
     out["upload_speed"] = up.get("speed", 0)
-    # Convert to human-readable in the frontend; here we return raw bytes/s
     return out
 
 
 def _transmission_info(resp: dict, _widget: dict) -> dict:
-    """Parse Transmission torrent-session-get response."""
-    # resp shape: {"arguments": {"torrentCount": N, "downloadSpeed": N, "uploadSpeed": N}}
+    """Transmission: DL/UL speed + torrent count."""
     args = resp.get("arguments", resp)
-    out = {}
+    out: dict[str, Any] = {}
     out["download_speed"] = args.get("downloadSpeed", 0)
     out["upload_speed"] = args.get("uploadSpeed", 0)
-    out["torrent_count"] = args.get("torrentCount", 0)
+    out["torrents"] = args.get("torrentCount", 0)
     return out
 
 
 def _sabnzbd_info(resp: dict, _widget: dict) -> dict:
-    """Parse SABnzbd queue + history summary."""
-    out = {}
+    """SABnzbd: queue length + queue size + download speed."""
+    out: dict[str, Any] = {}
     if "queue" in resp:
         q = resp["queue"]
-        out["queue_length"] = int(q.get("noofslots", 0))
+        out["queue"] = int(q.get("noofslots", 0))
         out["queue_size_mb"] = float(q.get("size", "0").replace(" ", ""))
+        out["download_speed"] = int(q.get("speed", "0").replace(" ", "").split(".")[0] if isinstance(q.get("speed"), str) else q.get("speed", 0))
     if "history" in resp:
-        h = resp["history"]
-        out["total_downloaded"] = int(h.get("noofslots", 0))
+        out["downloaded"] = int(resp["history"].get("noofslots", 0))
     return out
 
 
 def _deluge_info(resp: dict, _widget: dict) -> dict:
-    """Parse Deluge web UI stats response."""
-    out = {}
+    """Deluge: DL/UL speed + torrent count."""
+    out: dict[str, Any] = {}
     stats = resp.get("stats", resp)
     out["download_speed"] = int(stats.get("download_rate", 0))
     out["upload_speed"] = int(stats.get("upload_rate", 0))
-    out["torrent_count"] = int(stats.get("num_torrents", 0))
+    out["torrents"] = int(stats.get("num_torrents", 0))
     return out
 
 
+# ── DNS sinkholes ──────────────────────────────────────────────────────────────
+
 def _pihole_info(resp: dict, _widget: dict) -> dict:
-    """Parse Pi-hole API stats."""
-    out = {}
-    if "domains_being_blocked" in resp:
-        out["domains_blocked"] = resp["domains_being_blocked"]
-        out["dns_queries_today"] = resp.get("dns_queries_today", 0)
-        out["ads_blocked_today"] = resp.get("ads_blocked_today", 0)
-        out["ads_percentage_today"] = round(resp.get("ads_percentage_today", 0), 2)
+    """Pi-hole: queries today + ads blocked + block %."""
+    out: dict[str, Any] = {}
+    out["queries_today"] = resp.get("dns_queries_today", 0)
+    out["ads_blocked"] = resp.get("ads_blocked_today", 0)
+    out["block_pct"] = round(resp.get("ads_percentage_today", 0), 1)
+    out["domains_blocked"] = resp.get("domains_being_blocked", 0)
     return out
 
 
 def _adguard_info(resp: dict, _widget: dict) -> dict:
-    """Parse AdGuard Home status response."""
-    out = {}
-    out["dns_queries"] = resp.get("numDnsQueries", 0)
-    out["blocked_filtering"] = resp.get("numBlockedFiltering", 0)
-    out["percent_blocked"] = round(resp.get("ratioFastFiltering", 0) * 100, 2)
+    """AdGuard: DNS queries + blocked + block %."""
+    out: dict[str, Any] = {}
+    out["queries"] = resp.get("numDnsQueries", 0)
+    out["blocked"] = resp.get("numBlockedFiltering", 0)
+    out["block_pct"] = round(resp.get("ratioFastFiltering", 0) * 100, 1)
     return out
 
 
-def _traefik_npm_info(resp: dict, _widget: dict) -> dict:
-    """Parse Nginx Proxy Manager users count."""
-    # /api/nginx/proxy-hosts returns a list
-    if isinstance(resp, list):
-        return {"proxy_hosts": len(resp)}
-    return {}
+# ── Monitoring ────────────────────────────────────────────────────────────────
+
+def _grafana_info(resp: dict, _widget: dict) -> dict:
+    """Grafana: dashboards + users + alerts."""
+    out: dict[str, Any] = {}
+    out["dashboards"] = resp.get("dashboards", 0)
+    out["users"] = resp.get("users", 0)
+    out["alerts"] = resp.get("alerts", 0)
+    return out
+
+
+def _prometheus_info(resp: dict, _widget: dict) -> dict:
+    """Prometheus: active series + status."""
+    out: dict[str, Any] = {}
+    data = resp.get("data", {})
+    out["active_series"] = data.get("activeSeries", 0)
+    return out
 
 
 def _uptimekuma_info(resp: dict, _widget: dict) -> dict:
-    """Parse Uptime Kuma status page metrics from /api/status-page/."""
-    out = {}
+    """Uptime Kuma: monitors up/down/paused."""
+    out: dict[str, Any] = {}
     if "stats" in resp:
         stats = resp["stats"]
         out["up"] = stats.get("up", 0)
@@ -430,54 +475,10 @@ def _uptimekuma_info(resp: dict, _widget: dict) -> dict:
     return out
 
 
-def _homeassistant_info(resp: dict, _widget: dict) -> dict:
-    """Parse Home Assistant /api/states response."""
-    out = {}
-    if isinstance(resp, list):
-        out["entities"] = len(resp)
-        # Count entities by domain
-        domains = {}
-        for entity in resp:
-            eid = entity.get("entity_id", "")
-            domain = eid.split(".")[0] if "." in eid else "other"
-            domains[domain] = domains.get(domain, 0) + 1
-        out["domains"] = domains
-        out["lights_on"] = sum(
-            1 for e in resp
-            if e.get("entity_id", "").startswith("light.")
-            and e.get("state") == "on"
-        )
-        out["switches_on"] = sum(
-            1 for e in resp
-            if e.get("entity_id", "").startswith("switch.")
-            and e.get("state") == "on"
-        )
-    elif isinstance(resp, dict):
-        out["state"] = resp.get("state", "unknown")
-        out["entity_id"] = resp.get("entity_id", "")
-    return out
-
-
-def _grafana_info(resp: dict, _widget: dict) -> dict:
-    """Parse Grafana stats response."""
-    out = {}
-    out["dashboards"] = resp.get("dashboards", 0)
-    out["users"] = resp.get("users", 0)
-    out["orgs"] = resp.get("orgs", 0)
-    return out
-
-
-def _prometheus_info(resp: dict, _widget: dict) -> dict:
-    """Parse Prometheus /api/v1/status/config response."""
-    out = {}
-    data = resp.get("data", {})
-    out["active_series"] = data.get("activeSeries", 0)
-    out["config_yaml"] = "loaded" if data.get("yamlConfig", "") else "none"
-    return out
-
+# ── Container / infrastructure ────────────────────────────────────────────────
 
 def _portainer_info(resp: dict, _widget: dict) -> dict:
-    """Parse Portainer /api/endpoints response (list of endpoints)."""
+    """Portainer: endpoint count + running/stopped containers."""
     if isinstance(resp, list):
         return {
             "endpoints": len(resp),
@@ -487,142 +488,196 @@ def _portainer_info(resp: dict, _widget: dict) -> dict:
     return {}
 
 
+def _nginxproxymanager_info(resp: dict, _widget: dict) -> dict:
+    """NPM: proxy host count."""
+    if isinstance(resp, list):
+        return {"proxy_hosts": len(resp)}
+    return {}
+
+
+def _truenas_info(resp: dict, _widget: dict) -> dict:
+    """TrueNAS: pool/dataset usage + uptime."""
+    out: dict[str, Any] = {}
+    out["uptime"] = resp.get("uptime_seconds", 0)
+    load = resp.get("load_average", [])
+    if load and isinstance(load, list) and len(load) > 0:
+        out["load"] = round(load[0], 2)
+    return out
+
+
+def _unraid_info(resp: dict, _widget: dict) -> dict:
+    """Unraid: CPU + memory + array state."""
+    out: dict[str, Any] = {}
+    if isinstance(resp, dict):
+        out["cpu"] = resp.get("cpuUsage", "—")
+        out["mem"] = resp.get("memUsage", "—")
+        out["array"] = resp.get("mdState", "unknown")
+    return out
+
+
+def _synology_info(resp: dict, _widget: dict) -> dict:
+    """Synology: CPU + memory + temp + uptime."""
+    out: dict[str, Any] = {}
+    data = resp.get("data", {})
+    out["cpu"] = data.get("cpu_utilization", "—")
+    out["mem"] = data.get("memory_utilization", "—")
+    out["temp"] = data.get("temperature", "—")
+    out["uptime"] = data.get("up_time", "—")
+    return out
+
+
+# ── Media servers ──────────────────────────────────────────────────────────────
+
+def _jellyfin_info(resp: dict, _widget: dict) -> dict:
+    """Jellyfin: currently playing sessions + active users + library size."""
+    # If we got a list → these are sessions (from /Sessions endpoint)
+    if isinstance(resp, list):
+        active = [s for s in resp if s.get("IsActive", False) and s.get("NowPlayingItem")]
+        out: dict[str, Any] = {}
+        out["playing"] = len(active)
+        out["sessions"] = len(resp)
+        return out
+    # Otherwise it's system info from /System/Info — return nothing useful
+    return {}
+
+
+def _plex_info(resp: dict, _widget: dict) -> dict:
+    """Plex: active streams + bandwidth."""
+    out: dict[str, Any] = {}
+    # /status/sessions returns { MediaContainer: { size: N, ... } }
+    mc = resp.get("MediaContainer", resp)
+    out["streams"] = int(mc.get("size", 0))
+    return out
+
+
+def _navidrome_info(resp: dict, _widget: dict) -> dict:
+    """Navidrome: artist + album + song count."""
+    out: dict[str, Any] = {}
+    subsonic = resp.get("subsonic-response", resp)
+    if "artists" in subsonic:
+        out["artists"] = subsonic["artists"].get("count", 0)
+    if "albums" in subsonic:
+        out["albums"] = subsonic["albums"].get("count", 0)
+    if "songs" in subsonic:
+        out["songs"] = subsonic["songs"].get("count", 0)
+    return out
+
+
+# ── Home automation ────────────────────────────────────────────────────────────
+
+def _homeassistant_info(resp: dict, _widget: dict) -> dict:
+    """Home Assistant: entity count + lights/switches on + sensors."""
+    out: dict[str, Any] = {}
+    if isinstance(resp, list):
+        out["entities"] = len(resp)
+        out["lights_on"] = sum(
+            1 for e in resp
+            if e.get("entity_id", "").startswith("light.") and e.get("state") == "on"
+        )
+        out["switches_on"] = sum(
+            1 for e in resp
+            if e.get("entity_id", "").startswith("switch.") and e.get("state") == "on"
+        )
+        out["sensors"] = sum(
+            1 for e in resp
+            if e.get("entity_id", "").startswith("sensor.")
+        )
+    return out
+
+
+# ── Request management ─────────────────────────────────────────────────────────
+
 def _overseerr_info(resp: dict, _widget: dict) -> dict:
-    """Parse Overseerr /api/v1/request/count response."""
-    out = {}
+    """Overseerr: pending/approved/declined requests."""
+    out: dict[str, Any] = {}
     out["pending"] = resp.get("pending", 0)
     out["approved"] = resp.get("approved", 0)
     out["declined"] = resp.get("declined", 0)
     return out
 
 
+# ── Other services ────────────────────────────────────────────────────────────
+
 def _bazarr_info(resp: dict, _widget: dict) -> dict:
-    """Parse Bazarr system status."""
-    out = {}
-    out["version"] = resp.get("data", {}).get("version", "") if isinstance(resp, dict) else ""
-    return out
-
-
-def _truenas_info(resp: dict, _widget: dict) -> dict:
-    """Parse TrueNAS system info."""
-    out = {}
-    out["version"] = resp.get("version", "")
-    out["hostname"] = resp.get("hostname", "")
-    out["uptime"] = resp.get("uptime_seconds", 0)
-    out["load_average"] = resp.get("load_average", [])
-    return out
-
-
-def _jellyfin_info(resp: dict, _widget: dict) -> dict:
-    """Parse Jellyfin /GetSystemInfo response."""
-    out = {}
-    info = resp.get("SystemInfo", resp)
-    out["version"] = info.get("Version", "")
-    out["server_name"] = info.get("ServerName", "")
-    out["id"] = info.get("Id", "")
-    return out
-
-
-def _plex_info(resp: dict, _widget: dict) -> dict:
-    """Parse Plex /api/v2/user response."""
-    out = {}
-    out["username"] = resp.get("username", "")
-    out["email"] = resp.get("email", "")
-    out["friendly_name"] = resp.get("friendlyName", "")
-    return out
-
-
-def _navidrome_info(resp: dict, _widget: dict) -> dict:
-    """Parse Navidrome /api/ping response."""
-    out = {}
-    out["version"] = resp.get("version", "")
-    out["server"] = resp.get("server", "")
+    """Bazarr: subtitle stats — total episodes/movies with subtitles."""
+    out: dict[str, Any] = {}
+    data = resp.get("data", resp)
+    if isinstance(data, dict):
+        out["episodes"] = data.get("totalEpisodes", 0)
+        out["movies"] = data.get("totalMovies", 0)
     return out
 
 
 def _nextcloud_info(resp: dict, _widget: dict) -> dict:
-    """Parse Nextcloud /ocs/v1.php/cloud/capabilities response."""
-    out = {}
+    """Nextcloud: storage usage + active users."""
+    out: dict[str, Any] = {}
     ocs = resp.get("ocs", {})
     data = ocs.get("data", {})
-    version_data = data.get("version", {})
-    out["version"] = version_data.get("version", "")
-    out["users"] = len(data.get("users", {})) if isinstance(data.get("users"), dict) else 0
+    # storage stats
+    storage = data.get("storage", {})
+    if storage:
+        out["storage_used"] = storage.get("used", 0)
+        out["storage_free"] = storage.get("free", 0)
+    out["users"] = len(data.get("users", {})) if isinstance(data.get("users"), dict) else data.get("activeUsers", 0)
     return out
 
 
 def _gitea_info(resp: dict, _widget: dict) -> dict:
-    """Parse Gitea /api/v1/version response."""
-    out = {}
-    out["version"] = resp.get("version", "")
-    out["commit"] = resp.get("commit", {}).get("id", "") if isinstance(resp.get("commit"), dict) else ""
+    """Gitea: repo count + open issues + pull requests."""
+    out: dict[str, Any] = {}
+    # /api/v1/repos/search returns {"data": [...], "ok": true}
+    if isinstance(resp, dict) and "data" in resp:
+        repos = resp["data"]
+        out["repos"] = len(repos)
+        out["open_issues"] = sum(r.get("open_issues_count", 0) for r in repos if isinstance(r, dict))
     return out
 
 
 def _immich_info(resp: dict, _widget: dict) -> dict:
-    """Parse Immich /api/server-info/server-version response."""
-    out = {}
-    out["version"] = ".".join(str(v) for v in resp.values()) if isinstance(resp, dict) else ""
+    """Immich: photo + video count + storage used."""
+    out: dict[str, Any] = {}
+    if isinstance(resp, dict):
+        out["photos"] = resp.get("photos", 0)
+        out["videos"] = resp.get("videos", 0)
+        out["storage"] = resp.get("usage", 0)
     return out
 
 
 def _paperless_info(resp: dict, _widget: dict) -> dict:
-    """Parse Paperless-ngx /api/documents/total response."""
-    out = {}
-    total = resp.get("count", resp.get("total", 0))
-    out["documents"] = total
+    """Paperless-ngx: document count + inbox count."""
+    out: dict[str, Any] = {}
+    out["documents"] = resp.get("count", resp.get("total", 0))
+    out["inbox"] = resp.get("inbox_count", 0)
     return out
 
 
-def _unraid_info(resp: dict, _widget: dict) -> dict:
-    """Parse Unraid /api/v1/var response (system stats)."""
-    out = {}
-    if isinstance(resp, dict):
-        out["cpu_usage"] = resp.get("cpuUsage", "—")
-        out["mem_usage"] = resp.get("memUsage", "—")
-        out["array_state"] = resp.get("mdState", "unknown")
-    return out
-
-
-def _synology_info(resp: dict, _widget: dict) -> dict:
-    """Parse Synology DSM system info response."""
-    out = {}
-    data = resp.get("data", {})
-    out["model"] = data.get("model", "")
-    out["ram"] = data.get("ram_size", 0)
-    out["serial"] = data.get("serial", "")
-    out["uptime"] = data.get("up_time", "")
-    out["temperature"] = data.get("temperature", 0)
-    return out
-
-
-# ════════════════════════════════════════════════════════════════════════
-# INFO_REGISTRY maps widget_id → (info_endpoint, info_parser_function)
+# ══════════════════════════════════════════════════════════════════════════════
+# INFO_REGISTRY maps widget_id → {info_endpoint, info_parser}
 # Only widgets that support live data fetching are listed here.
-# The frontend only calls /api/tiles/{id}/info for tiles with a matching
-# widget_type. Others just show the basic tile (name, url, link).
-# ════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
 INFO_REGISTRY: dict[str, dict[str, Any]] = {
+    # ── *arr stack — use the "wanted/missing" endpoints for actionable counts ──
     "sonarr": {
-        "info_endpoint": "/api/v3/system/status",
-        "info_parser": _arr_stats,
+        "info_endpoint": "/api/v3/wanted/missing?pageSize=1&page=1",
+        "info_parser": _sonarr_info,
     },
     "radarr": {
-        "info_endpoint": "/api/v3/system/status",
-        "info_parser": _arr_stats,
+        "info_endpoint": "/api/v3/wanted/missing?pageSize=1&page=1",
+        "info_parser": _radarr_info,
     },
     "lidarr": {
-        "info_endpoint": "/api/v1/system/status",
-        "info_parser": _arr_stats,
+        "info_endpoint": "/api/v1/wanted/missing?pageSize=1&page=1",
+        "info_parser": _lidarr_info,
     },
     "readarr": {
-        "info_endpoint": "/api/v1/system/status",
-        "info_parser": _arr_stats,
+        "info_endpoint": "/api/v1/wanted/missing?pageSize=1&page=1",
+        "info_parser": _readarr_info,
     },
     "prowlarr": {
-        "info_endpoint": "/api/v1/system/status",
-        "info_parser": _arr_stats,
+        "info_endpoint": "/api/v1/indexer?pageSize=1&page=1",
+        "info_parser": _prowlarr_info,
     },
+    # ── Download clients ──
     "qbit_torrent": {
         "info_endpoint": "/api/v2/transfer/info",
         "info_parser": _qbittorrent_info,
@@ -639,6 +694,7 @@ INFO_REGISTRY: dict[str, dict[str, Any]] = {
         "info_endpoint": "/json",
         "info_parser": _deluge_info,
     },
+    # ── DNS sinkholes ──
     "pihole": {
         "info_endpoint": "/admin/api.php?stats&summaryRaw",
         "info_parser": _pihole_info,
@@ -647,77 +703,83 @@ INFO_REGISTRY: dict[str, dict[str, Any]] = {
         "info_endpoint": "/control/stats",
         "info_parser": _adguard_info,
     },
-    "nginxproxymanager": {
-        "info_endpoint": "/api/nginx/proxy-hosts",
-        "info_parser": _traefik_npm_info,
-    },
-    "uptimekuma": {
-        "info_endpoint": "/api/status-page/heart",
-        "info_parser": _uptimekuma_info,
-    },
-    "homeassistant": {
-        "info_endpoint": "/api/states",
-        "info_parser": _homeassistant_info,
-    },
+    # ── Monitoring ──
     "grafana": {
         "info_endpoint": "/api/admin/stats",
         "info_parser": _grafana_info,
     },
     "prometheus": {
-        "info_endpoint": "/api/v1/status/config",
+        "info_endpoint": "/api/v1/status/tsdb",
         "info_parser": _prometheus_info,
     },
+    "uptimekuma": {
+        "info_endpoint": "/api/status-page/heart",
+        "info_parser": _uptimekuma_info,
+    },
+    # ── Container / infrastructure ──
     "portainer": {
         "info_endpoint": "/api/endpoints",
         "info_parser": _portainer_info,
     },
-    "overseerr": {
-        "info_endpoint": "/api/v1/request/count",
-        "info_parser": _overseerr_info,
-    },
-    "bazarr": {
-        "info_endpoint": "/api/system/status",
-        "info_parser": _bazarr_info,
+    "nginxproxymanager": {
+        "info_endpoint": "/api/nginx/proxy-hosts",
+        "info_parser": _nginxproxymanager_info,
     },
     "truenas": {
         "info_endpoint": "/api/v2.0/system/info",
         "info_parser": _truenas_info,
-    },
-    "jellyfin": {
-        "info_endpoint": "/System/Info/public",
-        "info_parser": _jellyfin_info,
-    },
-    "plex": {
-        "info_endpoint": "/api/v2/user",
-        "info_parser": _plex_info,
-    },
-    "navidrome": {
-        "info_endpoint": "/rest/ping",
-        "info_parser": _navidrome_info,
-    },
-    "nextcloud": {
-        "info_endpoint": "/ocs/v1.php/cloud/capabilities?format=json",
-        "info_parser": _nextcloud_info,
-    },
-    "gitea": {
-        "info_endpoint": "/api/v1/version",
-        "info_parser": _gitea_info,
-    },
-    "immich": {
-        "info_endpoint": "/api/server-info/server-version",
-        "info_parser": _immich_info,
-    },
-    "paperlessngx": {
-        "info_endpoint": "/api/documents/total",
-        "info_parser": _paperless_info,
     },
     "unraid": {
         "info_endpoint": "/api/v1/var",
         "info_parser": _unraid_info,
     },
     "synology": {
-        "info_endpoint": "/webapi/query.cgi?api=SYNO.SystemInfo&version=2&method=get",
+        "info_endpoint": "/webapi/query.cgi?api=SYNO.Core.System.Status&version=1&method=get",
         "info_parser": _synology_info,
+    },
+    # ── Media servers ──
+    "jellyfin": {
+        "info_endpoint": "/Sessions",
+        "info_parser": _jellyfin_info,
+    },
+    "plex": {
+        "info_endpoint": "/status/sessions",
+        "info_parser": _plex_info,
+    },
+    "navidrome": {
+        "info_endpoint": "/rest/getScanStatus",
+        "info_parser": _navidrome_info,
+    },
+    # ── Home automation ──
+    "homeassistant": {
+        "info_endpoint": "/api/states",
+        "info_parser": _homeassistant_info,
+    },
+    # ── Request management ──
+    "overseerr": {
+        "info_endpoint": "/api/v1/request/count",
+        "info_parser": _overseerr_info,
+    },
+    # ── Other ──
+    "bazarr": {
+        "info_endpoint": "/api/system/status",
+        "info_parser": _bazarr_info,
+    },
+    "nextcloud": {
+        "info_endpoint": "/ocs/v1.php/cloud/capabilities?format=json",
+        "info_parser": _nextcloud_info,
+    },
+    "gitea": {
+        "info_endpoint": "/api/v1/repos/search?limit=5",
+        "info_parser": _gitea_info,
+    },
+    "immich": {
+        "info_endpoint": "/api/server-info/stats",
+        "info_parser": _immich_info,
+    },
+    "paperlessngx": {
+        "info_endpoint": "/api/documents/total",
+        "info_parser": _paperless_info,
     },
 }
 

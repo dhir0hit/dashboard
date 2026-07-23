@@ -257,12 +257,13 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
     return () => window.clearInterval(handle);
   }, [pollInfo, intervalMs]);
 
-  // --- URL ping for tiles without a container_id ─────────────────────
+  // --- URL ping for tiles WITH container_name or container_id ─────────
   // Pings the tile's URL to determine if the service is reachable.
-  // Tiles with container_id get their status from Docker discovery.
+  // Only pings tiles where the user filled in container_name or container_id.
+  // Tiles without any Docker info are left alone (no unreachable badge).
   const pollPings = useCallback(async () => {
     const pingTiles = tiles.filter(
-      (t) => !t.entry.container_id && !t.entry.container_name && t.entry.url
+      (t) => (t.entry.container_id || t.entry.container_name) && t.entry.url
     );
     if (pingTiles.length === 0) return;
     const updates: Record<string, PingResult> = {};
@@ -900,52 +901,73 @@ function EmptyState() {
 // Service info block — shows live stats from the service API on tile cards.
 
 const INFO_LABELS: Record<string, string> = {
-  version: "Version",
-  uptime: "Uptime",
-  download_speed: "DL Speed",
-  upload_speed: "UL Speed",
-  torrent_count: "Torrents",
-  queue_length: "Queue",
+  // Download clients
+  download_speed: "DL",
+  upload_speed: "UL",
+  torrents: "Torrents",
+  queue: "Queue",
   queue_size_mb: "Queue Size",
-  total_downloaded: "Downloaded",
+  downloaded: "Done",
+  // DNS sinkholes
+  queries_today: "Queries",
+  ads_blocked: "Ads Blocked",
+  block_pct: "Block %",
   domains_blocked: "Blocked",
-  dns_queries_today: "Queries",
-  ads_blocked_today: "Ads Blocked",
-  ads_percentage_today: "Block %",
-  dns_queries: "Queries",
-  blocked_filtering: "Blocked",
-  percent_blocked: "Block %",
-  proxy_hosts: "Hosts",
+  queries: "Queries",
+  blocked: "Blocked",
+  // *arr stack
+  missing_episodes: "Missing",
+  missing_movies: "Missing",
+  missing_albums: "Missing",
+  missing_books: "Missing",
+  indexers: "Indexers",
+  // Monitoring
+  dashboards: "Dashboards",
+  users: "Users",
+  alerts: "Alerts",
+  active_series: "Series",
   up: "Up",
   down: "Down",
   paused: "Paused",
-  entities: "Entities",
-  lights_on: "Lights",
-  switches_on: "Switches",
-  dashboards: "Dashboards",
-  users: "Users",
-  orgs: "Orgs",
-  active_series: "Series",
+  // Infrastructure
   endpoints: "Endpoints",
   running: "Running",
   stopped: "Stopped",
+  proxy_hosts: "Hosts",
+  load: "Load",
+  cpu: "CPU",
+  mem: "Mem",
+  array: "Array",
+  temp: "Temp",
+  uptime: "Uptime",
+  // Media servers
+  playing: "Playing",
+  streams: "Streams",
+  sessions: "Sessions",
+  artists: "Artists",
+  albums: "Albums",
+  songs: "Songs",
+  // Home automation
+  entities: "Entities",
+  lights_on: "Lights On",
+  switches_on: "Switches On",
+  sensors: "Sensors",
+  // Requests
   pending: "Pending",
   approved: "Approved",
   declined: "Declined",
-  hostname: "Hostname",
-  load_average: "Load",
-  server_name: "Server",
-  username: "User",
+  // Other
+  episodes: "Episodes",
+  movies: "Movies",
+  storage_used: "Used",
+  storage_free: "Free",
+  storage: "Storage",
+  photos: "Photos",
+  videos: "Videos",
   documents: "Docs",
-  cpu_usage: "CPU",
-  mem_usage: "Mem",
-  array_state: "Array",
-  model: "Model",
-  ram: "RAM",
-  temperature: "Temp",
-  friendly_name: "Name",
-  state: "State",
-  entity_id: "Entity",
+  inbox: "Inbox",
+  repos: "Repos",
+  open_issues: "Issues",
 };
 
 function formatBytes(b: number): string {
