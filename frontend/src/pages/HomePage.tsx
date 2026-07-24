@@ -81,7 +81,8 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
   }, [loadDiscovery]);
 
   // --- overlay discovered status onto user tiles ------------------------
-  // Build lookup maps: one by discovered service id, one by container name.
+  // Build lookup maps: one by discovered service id, one by container name,
+  // and one by normalized name (lowercase, no spaces/hyphens/underscores).
   const byContainerId = useMemo(() => {
     const m = new Map<string, DiscoveredService>();
     for (const s of discovery?.services ?? []) m.set(s.id, s);
@@ -91,6 +92,20 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
   const byContainerName = useMemo(() => {
     const m = new Map<string, DiscoveredService>();
     for (const s of discovery?.services ?? []) m.set(s.name.toLowerCase(), s);
+    return m;
+  }, [discovery]);
+
+  // Normalized name: lowercase, strip spaces/hyphens/underscores.
+  // "VaultWarden" → "vaultwarden", "Adguard Home" → "adguardhome"
+  const normalizeName = (n: string) =>
+    n.toLowerCase().replace(/[\s\-_]+/g, "");
+
+  const byNormalizedName = useMemo(() => {
+    const m = new Map<string, DiscoveredService>();
+    for (const s of discovery?.services ?? []) {
+      const key = normalizeName(s.name);
+      if (key && !m.has(key)) m.set(key, s);
+    }
     return m;
   }, [discovery]);
 
@@ -110,12 +125,16 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
       (a, b) => a.display_order - b.display_order
     );
     return sorted.map((entry) => {
-      // Match by container_id first, then by container_name (case-insensitive)
+      // Match by container_id first, then by container_name (case-insensitive),
+      // then by normalized tile display name (auto-link: "VaultWarden" → "vaultwarden")
       let discovered = entry.container_id
         ? byContainerId.get(entry.container_id)
         : undefined;
       if (!discovered && entry.container_name) {
         discovered = byContainerName.get(entry.container_name.toLowerCase());
+      }
+      if (!discovered && entry.name) {
+        discovered = byNormalizedName.get(normalizeName(entry.name));
       }
       // Health is keyed by the discovered service id. If we matched by
       // container_name, use the discovered service's id for the lookup.
@@ -125,7 +144,7 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
         health?.status ?? discovered?.status ?? "unknown";
       return { entry, discovered, health, effectiveStatus };
     });
-  }, [config.services, byContainerId, byContainerName, healthById]);
+  }, [config.services, byContainerId, byContainerName, byNormalizedName, healthById]);
 
   // After ping results arrive, override effective status for tiles that
   // don't have Docker health. Ping-reachable = running, not = stopped.
@@ -194,8 +213,19 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
         .map((s) => s.container_name?.toLowerCase())
         .filter((n): n is string => !!n)
     );
+    // Also exclude discovered services that auto-link by normalized tile name.
+    const linkedNormalized = new Set(
+      config.services
+        .map((s) => normalizeName(s.name))
+        .filter((n): n is string => !!n)
+    );
     return (discovery?.services ?? [])
-      .filter((s) => !linkedIds.has(s.id) && !linkedNames.has(s.name.toLowerCase()))
+      .filter(
+        (s) =>
+          !linkedIds.has(s.id) &&
+          !linkedNames.has(s.name.toLowerCase()) &&
+          !linkedNormalized.has(normalizeName(s.name))
+      )
       .map((s) => ({
         entry: {
           id: `disc-${s.id}`,
@@ -259,6 +289,8 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
       .map((t) => {
         if (t.entry.container_id) return t.entry.container_id;
         if (t.entry.container_name && t.discovered) return t.discovered.id;
+        // Auto-linked by name: poll health using the discovered service id.
+        if (t.discovered) return t.discovered.id;
         return undefined;
       })
       .filter((id): id is string => !!id);
