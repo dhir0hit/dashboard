@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     ssh_user: str = Field("root")
     ssh_key_file: str = Field("")
     ssh_password: str = Field("")
+    # When using SSH to a PVE host, which container/VM ID to `pct exec` into
+    # for Docker discovery. 0 = use local Docker socket instead.
+    ssh_vmid: int = Field(0, alias="SSH_VMID")
 
     # Mode
     mock: bool = Field(False, alias="MOCK")

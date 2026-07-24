@@ -5,7 +5,7 @@ FROM python:3.12-slim AS runtime
 # Curl is useful for the compose healthcheck; nothing else is added to keep
 # the image small.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ca-certificates \
+ && apt-get install -y --no-install-recommends curl ca-certificates docker.io \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

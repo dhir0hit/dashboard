@@ -30,18 +30,21 @@ services:
       PROXMOX_NODE: ${PROXMOX_NODE:-}
 
       # --- SSH for in-guest Docker discovery -----------------------------
-      # Optional. When empty, the backend falls back to `pct exec` for LXC
-      # guests (works only if the backend container can talk to the PVE host
-      # API and a PVE API token grants pct permissions).
+      # Optional. When SSH_HOST points at a PVE host, set SSH_VMID to the
+      # LXC container ID that runs Docker (e.g. 101). The backend will
+      # `pct exec <SSH_VMID> -- docker ps` to discover containers.
+      # When SSH_HOST is empty, the backend uses the mounted Docker socket.
       SSH_HOST: ${SSH_HOST:-}
       SSH_PORT: ${SSH_PORT:-22}
       SSH_USER: ${SSH_USER:-root}
       SSH_KEY_FILE: ${SSH_KEY_FILE:-}
       SSH_PASSWORD: ${SSH_PASSWORD:-}
+      SSH_VMID: ${SSH_VMID:-0}
 
-      # --- Mode + persistence --------------------------------------------
-      # MOCK=true → no real Proxmox host required (dry-run for development).
-      MOCK: ${MOCK:-true}
+      # MOCK=true → no real Docker/Proxmox required (dry-run for development).
+      # MOCK=false (default) → discovers real Docker containers via the
+      # mounted Docker socket (or SSH to PVE host if SSH_HOST is set).
+      MOCK: ${MOCK:-false}
       CONFIG_DB: /data/config.db
       # Explicit wallpaper storage dir (matches the volume mount below).
       WALLPAPER_DIR: /app/wallpapers
@@ -57,11 +60,10 @@ services:
       - dashboard-config:/data
       # Uploaded wallpapers — persists across restarts.
       - dashboard-wallpapers:/app/wallpapers
-      # Optional: mount the host Docker socket so the backend can discover
-      # services running directly on the host (set DOCKER_SOCK=/var/run/docker.sock
-      # on bare-metal Docker discovery). COMMENT OUT if you do not want the
-      # backend to have host Docker access.
-      - ${DOCKER_SOCK:-/dev/null}:/var/run/docker.sock
+      # Mount the host Docker socket so the backend can discover
+      # containers running on the same host via `docker ps`.
+      # Set DOCKER_SOCK=/dev/null in .env to disable.
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]

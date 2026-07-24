@@ -144,14 +144,14 @@ def _labels_to_dict(labels: str) -> dict[str, str]:
 def _ssh_client(s: Settings) -> paramiko.SSHClient:
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    kwargs = {"port": s.ssh_port, "timeout": 15}
+    kwargs: dict = {"port": s.ssh_port, "timeout": 15}
     if s.ssh_key_file and Path(s.ssh_key_file).exists():
         kwargs["key_filename"] = s.ssh_key_file
     elif s.ssh_password:
         kwargs["password"] = s.ssh_password
     else:
         kwargs["look_for_keys"] = True
-    client.connect(s.ssh_host, s.ssh_user, **kwargs)
+    client.connect(s.ssh_host, username=s.ssh_user, **kwargs)
     return client
 
 
@@ -241,8 +241,19 @@ def discover_docker_services(
 
 
 def hostname_to_node(default: str = "pve") -> str:
+    """Best-effort node name for local Docker discovery.
+
+    When the backend runs inside a Docker container, the hostname is a
+    random 12-char hex (e.g. ``ea533efc469b``). That's useless as a node
+    label, so fall back to ``default`` ("pve") in that case.
+    """
     try:
         h = socket.gethostname()
-        return h if h else default
+        if not h:
+            return default
+        # Docker container hostnames are 12 hex chars — not human-friendly.
+        if len(h) == 12 and all(c in "0123456789abcdef" for c in h.lower()):
+            return default
+        return h
     except Exception:
         return default

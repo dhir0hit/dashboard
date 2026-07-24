@@ -138,7 +138,8 @@ def get_services() -> ServicesResponse:
             from .docker_discover import discover_docker_services, hostname_to_node
             from .schemas import ContainerKind
             node = hostname_to_node()
-            svcs = discover_docker_services(s, node, 0, ContainerKind.LXC)
+            vmid = s.ssh_vmid if s.ssh_host else 0
+            svcs = discover_docker_services(s, node, vmid, ContainerKind.LXC)
             if svcs:
                 return ServicesResponse(services=svcs, source=f"docker:{node}", count=len(svcs))
             return ServicesResponse(services=[], source="docker:empty", count=0)
@@ -179,7 +180,8 @@ def get_service_health(service_id: str) -> HealthResponse:
             from .docker_discover import discover_docker_services, hostname_to_node
             from .schemas import ContainerKind
             node = hostname_to_node()
-            services = discover_docker_services(s, node, 0, ContainerKind.LXC)
+            vmid = s.ssh_vmid if s.ssh_host else 0
+            services = discover_docker_services(s, node, vmid, ContainerKind.LXC)
     except ProxmoxAuthError as e:
         raise HTTPException(status_code=401, detail=f"proxmox auth failed: {e}") from e
     except ProxmoxError as e:
