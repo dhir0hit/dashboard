@@ -251,6 +251,18 @@ export const api = {
     }
   },
 
+  async getAllTileInfo(): Promise<Record<string, ServiceInfo>> {
+    try {
+      const res = await fetch(`${API_BASE}/api/tiles/info`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok) return {};
+      return jsonOrThrow<Record<string, ServiceInfo>>(res);
+    } catch {
+      return {};
+    }
+  },
+
   async autoIcon(url: string): Promise<{ icon_url: string | null }> {
     try {
       const res = await fetch(`${API_BASE}/api/tiles/auto-icon`, {

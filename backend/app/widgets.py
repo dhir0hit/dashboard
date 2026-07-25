@@ -240,7 +240,7 @@ WIDGET_REGISTRY: list[dict[str, Any]] = [
         "icon_hint": "jellyfin",
         "auth_schema": "api_key",
         "login_path": "/Users/Me",
-        "auth_header_format": "Authorization: {token}",
+        "auth_header_format": "X-Emby-Token: {token}",
         "description": "Media server. Use a long-lived API token from your Jellyfin profile.",
     },
     {
@@ -823,7 +823,7 @@ def fetch_tile_info(entry: "ServiceEntry") -> dict:
         auth = (entry.username, entry.password or "")
 
     try:
-        resp = _httpx.get(url, headers=headers, auth=auth, timeout=10.0, verify=False)
+        resp = _httpx.get(url, headers=headers, auth=auth, timeout=5.0, verify=False)
     except _httpx.HTTPError as e:
         return {"error": f"network error: {e}", "widget_type": widget_id}
 

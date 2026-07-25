@@ -314,20 +314,14 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
   }, [pollHealth, intervalMs]);
 
   // --- service info polling ────────────────────────────────────────
-  // Poll /api/tiles/{id}/info for every tile with a widget_type. The
-  // backend calls the service's own API and returns parsed stats.
+  // Single batch call to /api/tiles/info — backend fetches all widget
+  // stats concurrently and returns {tile_id: info_dict} in one response.
   const pollInfo = useCallback(async () => {
     const widgetTiles = tiles.filter((t) => t.entry.widget_type);
     if (widgetTiles.length === 0) return;
-    const updates: Record<string, ServiceInfo> = {};
-    await Promise.all(
-      widgetTiles.map(async (t) => {
-        const info = await api.getTileInfo(t.entry.id);
-        if (info && info.widget_type) updates[t.entry.id] = info;
-      })
-    );
-    if (mountedRef.current && Object.keys(updates).length) {
-      setInfoById((prev) => ({ ...prev, ...updates }));
+    const batch = await api.getAllTileInfo();
+    if (mountedRef.current && batch && Object.keys(batch).length) {
+      setInfoById((prev) => ({ ...prev, ...batch }));
     }
   }, [tiles]);
 

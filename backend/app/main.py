@@ -695,6 +695,44 @@ def tile_info(service_id: str) -> dict:
     return result
 
 
+@app.get(
+    "/api/tiles/info",
+    tags=["tiles"],
+    summary="Batch-fetch live stats for all tiles with a widget_type",
+)
+def tiles_info_batch() -> dict:
+    """Fetch widget info for ALL configured tiles in a single request.
+
+    Iterates every tile that has a ``widget_type``, calls ``fetch_tile_info``
+    concurrently (thread pool, 5s per-call timeout), and returns a mapping
+    ``{tile_id: info_dict}``. Tiles that error or have no widget are omitted
+    from the result. This replaces N parallel frontend→backend round-trips
+    with one batch call.
+    """
+    import concurrent.futures as cf
+
+    from .widgets import fetch_tile_info
+
+    s = get_settings()
+    cfg = latest(s.config_db) or DashboardConfig()
+    widget_tiles = [e for e in cfg.services if e.widget_type]
+    if not widget_tiles:
+        return {}
+
+    results: dict[str, dict] = {}
+    with cf.ThreadPoolExecutor(max_workers=min(8, len(widget_tiles))) as pool:
+        future_map = {pool.submit(fetch_tile_info, e): e.id for e in widget_tiles}
+        for future in cf.as_completed(future_map, timeout=15):
+            tid = future_map[future]
+            try:
+                r = future.result(timeout=6)
+                if r and "widget_type" in r:
+                    results[tid] = r
+            except Exception:
+                pass  # skip failed tiles — frontend shows stale/empty
+    return results
+
+
 # ------------------------------------------------------------- tile helpers
 # Auto-fetch favicon/logo from a service URL + URL ping health check.
 
