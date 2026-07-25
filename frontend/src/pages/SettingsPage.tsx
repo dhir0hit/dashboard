@@ -28,6 +28,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
   Upload,
@@ -36,7 +37,7 @@ import {
 import clsx from "clsx";
 import { useSettings } from "../store";
 import { api } from "../api";
-import type { ServiceEntry, WidgetDefinition, WidgetAuthSchema } from "../types";
+import type { DiscoveredService, ServiceEntry, ServicesResponse, WidgetDefinition, WidgetAuthSchema } from "../types";
 
 export function SettingsPage() {
   const { config, status, error, load, addService, updateService, deleteService, reorderServices, setCategoryOrder } =
@@ -66,6 +67,12 @@ export function SettingsPage() {
         onDelete={deleteService}
         onReorder={reorderServices}
         onSetCategoryOrder={setCategoryOrder}
+      />
+
+      <DiscoveredSection
+        services={config.services}
+        onAdd={addService}
+        onUpdate={updateService}
       />
 
       <BackgroundSection />
@@ -711,6 +718,220 @@ function ServiceForm({
         </button>
       </div>
     </form>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Discovered services section — shows Docker containers found via
+// Proxmox discovery. Unlinked ones can be added as tiles; linked ones
+// can be edited or unlinked.
+// ────────────────────────────────────────────────────────────────────
+
+const ICON_HINT_TO_EMOJI: Record<string, string> = {
+  sonarr: "📺", radarr: "🎬", lidarr: "🎵", bazarr: "💬", readarr: "📚",
+  prowlarr: "🏴‍☠️", postgres: "🐘", postgresql: "🐘", mysql: "🐬",
+  redis: "♻️", mongodb: "🍃", elasticsearch: "🔍", kibana: "📈",
+  vault: "🔐", traefik: "TLS", caddy: "🌐", nodejs: "🟢", python: "🐍",
+  "home-assistant": "🏠", "home assistant": "🏠", pihole: "🕳️",
+  adguard: "🛡️", "uptime-kuma": "⏱️", docker: "🐳",
+};
+
+function iconForHint(hint?: string): string {
+  if (!hint) return "🧩";
+  return ICON_HINT_TO_EMOJI[hint.toLowerCase()] ?? "🧩";
+}
+
+const normalizeName = (n: string) => n.toLowerCase().replace(/[\s\-_]+/g, "");
+
+function DiscoveredSection({
+  services,
+  onAdd,
+  onUpdate,
+}: {
+  services: ServiceEntry[];
+  onAdd: (entry: Omit<ServiceEntry, "id" | "display_order">) => Promise<void>;
+  onUpdate: (id: string, patch: Partial<ServiceEntry>) => Promise<void>;
+}) {
+  const [discovery, setDiscovery] = useState<ServicesResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [addingId, setAddingId] = useState<string | null>(null);
+
+  // Build lookup maps to determine which tiles are linked to which discovered
+  // services. Match by container_id, container_name, and normalized name.
+  const tileByContainerId = useMemo(() => {
+    const m = new Map<string, ServiceEntry>();
+    for (const s of services) if (s.container_id) m.set(s.container_id, s);
+    return m;
+  }, [services]);
+
+  const tileByContainerName = useMemo(() => {
+    const m = new Map<string, ServiceEntry>();
+    for (const s of services) if (s.container_name) m.set(s.container_name.toLowerCase(), s);
+    return m;
+  }, [services]);
+
+  const tileByNormalizedName = useMemo(() => {
+    const m = new Map<string, ServiceEntry>();
+    for (const s of services) {
+      const key = normalizeName(s.name);
+      if (key) m.set(key, s);
+    }
+    return m;
+  }, [services]);
+
+  async function refresh() {
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await api.getServices();
+      setDiscovery(resp);
+    } catch (err) {
+      setError((err as Error).message || "Failed to discover services");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void refresh(); }, []);
+
+  function findLinkedTile(d: DiscoveredService): ServiceEntry | undefined {
+    return (
+      tileByContainerId.get(d.id) ??
+      tileByContainerName.get(d.name.toLowerCase()) ??
+      tileByNormalizedName.get(normalizeName(d.name))
+    );
+  }
+
+  async function addAsTile(d: DiscoveredService) {
+    setAddingId(d.id);
+    try {
+      const port = d.ports?.[0];
+      const guessedUrl = port ? `http://${d.node}:${port.host}` : undefined;
+      await onAdd({
+        name: d.name,
+        icon: iconForHint(d.icon_hint),
+        container_name: d.name,
+        container_id: d.id,
+        url: guessedUrl,
+        widget_type: undefined,
+      });
+    } finally {
+      setAddingId(null);
+    }
+  }
+
+  async function unlinkTile(tile: ServiceEntry) {
+    await onUpdate(tile.id, {
+      container_id: undefined,
+      container_name: undefined,
+    });
+  }
+
+  const discovered = discovery?.services ?? [];
+  const sorted = [...discovered].sort((a, b) => a.name.localeCompare(b.name));
+
+  return (
+    <section className="glass p-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Discovered services</h2>
+          <p className="mt-0.5 text-xs text-slate-400">
+            Docker containers found via Proxmox. Add unlinked ones as tiles or unlink existing ones.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          className="btn-ghost px-3 py-2 text-sm"
+          disabled={loading}
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+          Refresh
+        </button>
+      </div>
+
+      {error && (
+        <p className="mt-3 text-sm text-rose-300">{error}</p>
+      )}
+
+      {!error && !loading && sorted.length === 0 && (
+        <p className="mt-4 rounded-xl border border-dashed border-white/10 px-4 py-6 text-center text-sm text-slate-500">
+          No Docker containers discovered. Make sure Proxmox SSH discovery is configured.
+        </p>
+      )}
+
+      {sorted.length > 0 && (
+        <ul className="mt-4 space-y-1.5">
+          {sorted.map((d) => {
+            const linked = findLinkedTile(d);
+            const statusColor =
+              d.status === "running" ? "bg-emerald-500/15 text-emerald-300"
+              : d.status === "stopped" ? "bg-rose-500/15 text-rose-300"
+              : "bg-slate-500/15 text-slate-400";
+            return (
+              <li
+                key={d.id}
+                className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-900/50 px-3 py-2 transition hover:bg-slate-900/80"
+              >
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/5 text-base">
+                  {iconForHint(d.icon_hint)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm font-medium text-white">{d.name}</span>
+                    {linked ? (
+                      <span className="chip shrink-0 border border-cyan-400/30 bg-cyan-400/10 text-cyan-200">
+                        <Check className="h-3 w-3" /> Linked
+                      </span>
+                    ) : (
+                      <span className="chip shrink-0 border border-amber-400/30 bg-amber-400/10 text-amber-200">
+                        Unlinked
+                      </span>
+                    )}
+                  </div>
+                  <div className="truncate text-xs text-slate-400">
+                    {d.image || "—"} · {d.node} (LXC {d.vmid})
+                    {d.ports && d.ports.length > 0 && (
+                      <span> · :{d.ports[0].host}</span>
+                    )}
+                  </div>
+                </div>
+                <span className={clsx("chip shrink-0", statusColor)}>
+                  {d.status}
+                </span>
+                {linked ? (
+                  <button
+                    type="button"
+                    onClick={() => void unlinkTile(linked)}
+                    className="btn-ghost px-2 py-1.5 text-xs text-slate-300"
+                    title={`Unlink from "${linked.name}" tile`}
+                  >
+                    Unlink
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void addAsTile(d)}
+                    disabled={addingId === d.id}
+                    className="btn-primary px-2.5 py-1.5 text-xs"
+                  >
+                    {addingId === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+                    Add tile
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {discovery && (
+        <p className="mt-3 text-xs text-slate-500">
+          {discovery.count} containers from {discovery.source}
+        </p>
+      )}
+    </section>
   );
 }
 
