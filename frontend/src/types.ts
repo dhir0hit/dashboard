@@ -15,11 +15,8 @@ export interface PortMapping {
 }
 
 export interface DiscoveredService {
-  id: string;            // e.g. "pve-lxc-100-docker-sonarr"
+  id: string;            // e.g. "docker-sonarr"
   name: string;
-  node: string;
-  vmid: number;
-  kind: "lxc" | "qemu";
   status: ServiceStatus;
   image: string;
   ports: PortMapping[];
@@ -29,7 +26,7 @@ export interface DiscoveredService {
 
 export interface ServicesResponse {
   services: DiscoveredService[];
-  source: string;       // "mock" | "proxmox:<host>"
+  source: string;       // "mock" | "docker_container"
   count: number;
 }
 
@@ -52,10 +49,10 @@ export interface ServiceEntry {
   url?: string;          // click-through URL (also used as api_url fallback)
   icon?: string;         // emoji or short hint like "sonarr"
   icon_url?: string;     // custom icon URL (.svg/.png/.jpg) — overrides emoji
-  container_id?: string; // e.g. "pve-lxc-100-docker-sonarr"
+  container_id?: string; // e.g. "docker-sonarr"
   container_name?: string; // user-supplied Docker container name for direct connection
   display_order: number;
-  // Optional read-only fields surfaced from Proxmox discovery (not editable
+  // Optional read-only fields surfaced from Docker discovery (not editable
   // from the settings page — they come from /api/services).
   status?: ServiceStatus;
   ports?: { host: number; container: number; protocol: string }[];

@@ -1,4 +1,4 @@
-"""Deterministic mock dataset so the API can run without a real Proxmox host.
+"""Deterministic mock dataset so the API can run without a real Docker socket.
 
 The mock service list is intentionally empty — the dashboard starts with a
 clean tile grid. Users add their own tiles via the Settings page. Mock mode

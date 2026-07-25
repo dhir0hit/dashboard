@@ -1,9 +1,9 @@
-"""FastAPI application — Proxmox service discovery + dashboard config.
+"""FastAPI application — Docker service discovery + dashboard config.
 
 Run:
     uvicorn app.main:app --host 127.0.0.1 --port 8000
 
-Set MOCK=true for offline development (no real Proxmox host needed).
+Set MOCK=true for offline development (no real Docker socket needed).
 """
 from __future__ import annotations
 
@@ -33,7 +33,6 @@ from .calendar_store import (
 )
 from .docker_discover import discover_docker_services
 from .mock_data import MOCK_HEALTH, MOCK_SERVICES
-from .proxmox import ProxmoxAuthError, ProxmoxClient, ProxmoxError
 from .schemas import (
     BackgroundSettings,
     Bookmark,
@@ -67,9 +66,9 @@ log = logging.getLogger("dashboard")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 app = FastAPI(
-    title="Proxmox Dashboard Backend",
+    title="Docker Dashboard Backend",
     version="0.1.0",
-    description="Service-discovery REST API for an LXC/VM-heavy Proxmox host.",
+    description="Service-discovery REST API for Docker containers.",
 )
 # Allow a frontend on a different origin to hit this API.
 app.add_middleware(
@@ -84,83 +83,36 @@ app.add_middleware(
 def _startup() -> None:
     s = get_settings()
     init_db(s.config_db)
-    log.info("Dashboard backend ready (mock=%s, pve=%s)", s.mock, s.proxmox_api_url)
+    log.info("Dashboard backend ready (mock=%s, docker_sock=%s)", s.mock, s.docker_sock)
 
 
 import time as _time
 
 # ---------------------------------------------------------------- discovery
-# Cache Docker discovery results to avoid re-SSHing on every health check.
-# TTL=10s matches the health poll interval — fresh enough, 10x fewer SSH calls.
-_DISCOVERY_CACHE: dict[str, list] = {}  # source -> services
-_DISCOVERY_CACHE_TS: dict[str, float] = {}  # source -> timestamp
+# Cache Docker discovery results to avoid re-running docker ps on every health
+# check. TTL=10s matches the health poll interval — fresh enough, 10x fewer calls.
+_DISCOVERY_CACHE: list = []
+_DISCOVERY_CACHE_TS: float = 0.0
 _DISCOVERY_TTL = 10.0  # seconds
 
 
 def _get_cached_services() -> tuple[list, str]:
-    """Return cached Docker services, refreshing via SSH if older than TTL."""
-    s = get_settings()
-    if s.proxmox_api_token:
-        source_key = "proxmox"
-        if source_key in _DISCOVERY_CACHE and _time.time() - _DISCOVERY_CACHE_TS[source_key] < _DISCOVERY_TTL:
-            return _DISCOVERY_CACHE[source_key], source_key
-        services, source = _gather_real_services()
-        _DISCOVERY_CACHE[source_key] = services
-        _DISCOVERY_CACHE_TS[source_key] = _time.time()
-        return services, source
-    else:
-        from .docker_discover import discover_docker_services, hostname_to_node
-        from .schemas import ContainerKind
-        node = hostname_to_node()
-        vmid = s.ssh_vmid if s.ssh_host else 0
-        source_key = f"docker:{node}:{vmid}"
-        if source_key in _DISCOVERY_CACHE and _time.time() - _DISCOVERY_CACHE_TS[source_key] < _DISCOVERY_TTL:
-            return _DISCOVERY_CACHE[source_key], source_key
-        services = discover_docker_services(s, node, vmid, ContainerKind.LXC)
-        _DISCOVERY_CACHE[source_key] = services
-        _DISCOVERY_CACHE_TS[source_key] = _time.time()
-        return services, source_key
-
-
-def _gather_real_services() -> tuple[list[Service], str]:
-    """Return services from a real PVE host. Raises ProxmoxError on failure."""
-    s = get_settings()
-    pve = ProxmoxClient(s)
-    node = pve.pick_node()
-    out: list[Service] = []
-    for kind in ("lxc", "qemu"):
-        try:
-            if kind == "lxc":
-                guests = pve.list_lxc(node)
-            else:
-                guests = pve.list_qemu(node)
-        except ProxmoxError as e:
-            log.warning("listing %s on node %s failed: %s", kind, node, e)
-            continue
-        for g in guests:
-            vmid = int(g.get("vmid", 0))
-            if vmid <= 0:
-                continue
-            guest_status = str(g.get("status", "")).lower()
-            # only running guests can have docker containers
-            if guest_status and guest_status not in ("running",):
-                continue
-            kind_enum = "lxc" if kind == "lxc" else "qemu"
-            try:
-                svcs = discover_docker_services(s, node, vmid, kind_enum)  # type: ignore[arg-type]
-            except Exception as e:  # noqa: BLE001
-                log.warning("docker discovery failed for %s %s: %s", kind, vmid, e)
-                continue
-            out.extend(svcs)
-    return out, f"proxmox:{pve.host_label()}"
+    """Return cached Docker services, refreshing via local Docker socket if older than TTL."""
+    global _DISCOVERY_CACHE, _DISCOVERY_CACHE_TS
+    if _DISCOVERY_CACHE and _time.time() - _DISCOVERY_CACHE_TS < _DISCOVERY_TTL:
+        return _DISCOVERY_CACHE, "docker_container"
+    services = discover_docker_services()
+    _DISCOVERY_CACHE = services
+    _DISCOVERY_CACHE_TS = _time.time()
+    return services, "docker_container"
 
 
 @app.get(
     "/api/services",
     response_model=ServicesResponse,
-    responses={502: {"model": ErrorResponse}, 401: {"model": ErrorResponse}},
+    responses={502: {"model": ErrorResponse}},
     tags=["services"],
-    summary="List all discoverable services across LXC/QEMU guests",
+    summary="List all discoverable Docker containers",
 )
 def get_services() -> ServicesResponse:
     s = get_settings()
@@ -168,10 +120,8 @@ def get_services() -> ServicesResponse:
         return ServicesResponse(services=MOCK_SERVICES, source="mock", count=len(MOCK_SERVICES))
     try:
         services, source = _get_cached_services()
-    except ProxmoxAuthError as e:
-        raise HTTPException(status_code=401, detail=f"proxmox auth failed: {e}") from e
-    except ProxmoxError as e:
-        raise HTTPException(status_code=502, detail=f"proxmox error: {e}") from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"docker discovery failed: {e}") from e
     return ServicesResponse(services=services, source=source, count=len(services))
 
 
@@ -188,13 +138,9 @@ def get_service_health(service_id: str) -> HealthResponse:
             return HealthResponse(health=MOCK_HEALTH[service_id])
         raise HTTPException(status_code=404, detail=f"unknown service id: {service_id}")
 
-    # Real mode: use cached discovery (refreshes every 10s) instead of re-SSHing
+    # Real mode: use cached discovery (refreshes every 10s) instead of re-running docker ps
     try:
         services, _ = _get_cached_services()
-    except ProxmoxAuthError as e:
-        raise HTTPException(status_code=401, detail=f"proxmox auth failed: {e}") from e
-    except ProxmoxError as e:
-        raise HTTPException(status_code=502, detail=f"proxmox error: {e}") from e
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"docker discovery failed: {e}") from e
 
@@ -223,7 +169,7 @@ def get_all_health() -> dict:
     """Return health status for all discovered services at once.
 
     Uses the cached discovery result (10s TTL) so this is essentially free
-    after the first call — no SSH, no Docker round-trip.
+    after the first call — no Docker round-trip.
     Returns ``{service_id: ServiceHealth}``.
     """
     s = get_settings()
@@ -895,13 +841,13 @@ def tile_ping(service_id: str) -> dict:
 @app.get("/health", tags=["meta"])
 def root_health() -> dict:
     s = get_settings()
-    return {"ok": True, "mock": s.mock, "pve": s.proxmox_api_url}
+    return {"ok": True, "mock": s.mock, "docker_sock": s.docker_sock}
 
 
 @app.get("/", tags=["meta"])
 def root() -> dict:
     return {
-        "name": "Proxmox Dashboard Backend",
+        "name": "Docker Dashboard Backend",
         "version": "0.1.0",
         "docs": "/docs",
         "endpoints": [

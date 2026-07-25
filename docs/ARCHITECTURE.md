@@ -1,9 +1,9 @@
 # Architecture
 
-The Proxmox Dashboard is a two-container stack: a FastAPI backend that talks
-to Proxmox VE and does all persistence, and a React + Vite + Tailwind
-frontend served by nginx that reverse-proxies API calls to the backend so
-the user talks to exactly one origin.
+The Dashboard is a two-container stack: a FastAPI backend that discovers
+Docker containers via the local Docker socket and does all persistence,
+and a React + Vite + Tailwind frontend served by nginx that reverse-proxies
+API calls to the backend so the user talks to exactly one origin.
 
 This doc is the 30k-foot view — for per-module detail, follow the links
 into `docs/backend/` and `docs/frontend/`.
@@ -31,10 +31,10 @@ into `docs/backend/` and `docs/frontend/`.
 │                              └── /api/config/theme │bg│wppr ─► SQLite    │
 │                                                                         │
 │                              ▼                                          │
-│                    Proxmox VE REST API (https://pve:8006)              │
+│                    Docker socket (/var/run/docker.sock)                 │
 │                              │                                          │
 │                              ▼                                          │
-│                    LXC/QEMU guests → Docker containers                 │
+│                    Docker containers                                    │
 │                                                                         │
 │  Wallpaper storage: WALLPAPER_DIR env var (default: /app/wallpapers)    │
 └────────────────────────────────────────────────────────────────────────┘
@@ -79,8 +79,7 @@ the user never sees a frontend that proxies to a missing backend.
 3. Store.load()                     → api.getConfig() → GET /api/config
 4. HomePage mounts                  → api.getServices() → GET /api/services
 5. If MOCK=true                     → backend returns MOCK_SERVICES
-   If MOCK=false                    → ProxmoxClient.list_lxc/list_qemu()
-                                    → discover_docker_services() per guest
+   If MOCK=false                    → discover_docker_services() via Docker socket
 6. HomePage builds Tile[]           → user tiles + discovery overlay
 7. If no user tiles                 → unlinked discovered services render
 8. For each linked tile             → api.getServiceHealth(id) (poll 10s)
@@ -127,7 +126,7 @@ the tile store (custom theme CRUD, wallpaper upload).
                   │                 │                   │
                 config         config_store     docker_discover
                   │                 │                   │
-                  └──► proxmox ◄──┘  └──► schemas ◄──┘
+                  └─────────────────┘  └──► schemas ◄──┘
                                               ▲
                                               │
                                             main ◄── mock_data, widgets
@@ -157,9 +156,7 @@ the tile store (custom theme CRUD, wallpaper upload).
 
 | Dependency | Used by | Purpose |
 |---|---|---|
-| Proxmox VE API | backend `proxmox.py` | Guest + node discovery. |
 | Docker socket | backend `docker_discover.py` | Local-container discovery when mounted. |
-| SSH (optional) | backend `docker_discover.py` | In-guest Docker discovery. |
 | DuckDuckGo HTML search | backend `main.search` | Search proxy. |
 | `hermes` CLI (optional) | backend `main.list_cron` | Cron job list for the calendar. |
 
@@ -169,10 +166,10 @@ production.
 
 ## Configuring the stack
 
-See [`../CONFIGURATION.md`](../CONFIGURATION.md) for env vars, the PVE API
-token creation flow, in-guest Docker discovery modes, deploying with real
-Proxmox, and the through-the-website configuration story (tiles, theme,
-background, bookmarks, search, calendar).
+See [`../CONFIGURATION.md`](../CONFIGURATION.md) for env vars, the Docker
+socket discovery setup, deploying with real Docker containers, and the
+through-the-website configuration story (tiles, theme, background,
+bookmarks, search, calendar).
 
 ## Failure modes (graceful degradations)
 
@@ -182,7 +179,7 @@ background, bookmarks, search, calendar).
 | Discovery returns empty | Home shows the empty CTA ("No dashboard tiles configured yet") only if BOTH user tiles and unlinked discovered services are zero — otherwise shows the unlinked section. |
 | DuckDuckGo unreachable | `/api/search` returns 502; SearchPage shows an `AlertTriangle` banner. |
 | `hermes` not on PATH | `/api/cron` returns `source: "stub"`; CalendarPage shows a normal month grid with no pins, footer says "Data source: stub". |
-| Self-signed PVE cert + `PROXMOX_VERIFY_TLS=true` | Backend logs `proxmox error`; `/api/services` returns 502. Fix: `PROXMOX_VERIFY_TLS=false`. |
+| Docker socket not mounted | `/api/services` returns an empty list; Home shows the empty CTA or just the user's configured tiles. Check `docker compose logs backend` for errors. |
 | SQLite DB corrupt / unreadable path | `init_db` fails; container marked unhealthy; frontend refuses to start (depends_on healthcheck). |
 
 ---

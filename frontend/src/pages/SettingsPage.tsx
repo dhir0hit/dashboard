@@ -692,7 +692,7 @@ function ServiceForm({
           className="input"
           value={form.container_id}
           onChange={(e) => setForm({ ...form, container_id: e.target.value })}
-          placeholder="pve-lxc-100-docker-sonarr"
+          placeholder="docker-sonarr"
         />
       </div>
       <div>
@@ -723,7 +723,7 @@ function ServiceForm({
 
 // ────────────────────────────────────────────────────────────────────
 // Discovered services section — shows Docker containers found via
-// Proxmox discovery. Unlinked ones can be added as tiles; linked ones
+// Docker discovery. Unlinked ones can be added as tiles; linked ones
 // can be edited or unlinked.
 // ────────────────────────────────────────────────────────────────────
 
@@ -807,7 +807,7 @@ function DiscoveredSection({
     setAddingId(d.id);
     try {
       const port = d.ports?.[0];
-      const guessedUrl = port ? `http://${d.node}:${port.host}` : undefined;
+      const guessedUrl = port ? `http://localhost:${port.host}` : undefined;
       await onAdd({
         name: d.name,
         icon: iconForHint(d.icon_hint),
@@ -837,7 +837,7 @@ function DiscoveredSection({
         <div>
           <h2 className="text-lg font-semibold text-white">Discovered services</h2>
           <p className="mt-0.5 text-xs text-slate-400">
-            Docker containers found via Proxmox. Add unlinked ones as tiles or unlink existing ones.
+            Docker containers discovered on this host. Add unlinked ones as tiles or unlink existing ones.
           </p>
         </div>
         <button
@@ -857,7 +857,7 @@ function DiscoveredSection({
 
       {!error && !loading && sorted.length === 0 && (
         <p className="mt-4 rounded-xl border border-dashed border-white/10 px-4 py-6 text-center text-sm text-slate-500">
-          No Docker containers discovered. Make sure Proxmox SSH discovery is configured.
+          No Docker containers discovered. Make sure the Docker socket is mounted.
         </p>
       )}
 
@@ -891,7 +891,7 @@ function DiscoveredSection({
                     )}
                   </div>
                   <div className="truncate text-xs text-slate-400">
-                    {d.image || "—"} · {d.node} (LXC {d.vmid})
+                    {d.image || "—"} · {d.name}
                     {d.ports && d.ports.length > 0 && (
                       <span> · :{d.ports[0].host}</span>
                     )}

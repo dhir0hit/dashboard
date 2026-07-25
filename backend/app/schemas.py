@@ -14,11 +14,6 @@ class ServiceStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
-class ContainerKind(str, Enum):
-    LXC = "lxc"
-    QEMU = "qemu"
-
-
 class PortMapping(BaseModel):
     host_port: int = Field(..., alias="host", description="Published host port")
     container_port: int = Field(..., alias="container")
@@ -28,13 +23,10 @@ class PortMapping(BaseModel):
 
 
 class Service(BaseModel):
-    """A single discoverable service (docker container on a PVE guest)."""
+    """A single discoverable Docker container."""
 
-    id: str = Field(..., description="Stable unique id, e.g. <node>-<kind>-<vmid>-docker-<name>")
+    id: str = Field(..., description="Stable unique id, e.g. docker-<container_name>")
     name: str
-    node: str
-    vmid: int
-    kind: ContainerKind
     status: ServiceStatus = ServiceStatus.UNKNOWN
     image: str = ""
     ports: list[PortMapping] = Field(default_factory=list)
@@ -53,7 +45,7 @@ class ServiceHealth(BaseModel):
 
 class ServicesResponse(BaseModel):
     services: list[Service]
-    source: str = "proxmox"  # or "mock"
+    source: str = "docker_container"  # or "mock"
     count: int = 0
 
 
@@ -112,7 +104,7 @@ class ThemeDefinition(BaseModel):
 class ServiceEntry(BaseModel):
     """A dashboard tile the user added through the Settings page.
 
-    `id` is the tile id (not the underlying Proxmox service id). `container_id`
+    `id` is the tile id (not the underlying Docker service id). `container_id`
     optionally links the tile to a discovered service so /api/services health
     can be overlaid on the rendered card.
 
@@ -128,13 +120,13 @@ class ServiceEntry(BaseModel):
     url: Optional[str] = None  # click-through URL (also used as api_url fallback)
     icon: Optional[str] = None  # emoji or short hint like "sonarr"
     icon_url: Optional[str] = None  # custom icon URL (.svg/.png/.jpg) — overrides emoji
-    container_id: Optional[str] = None  # discovery-based id (pve-lxc-100-docker-sonarr)
+    container_id: Optional[str] = None  # discovery-based id (docker-<container_name>)
     container_name: Optional[str] = None  # docker container name for direct connection info
     display_order: int = 0
     # --- Widget integration -------------------------------------------------
     widget_type: Optional[str] = None  # one of WIDGET_REGISTRY keys, or None
     api_url: Optional[str] = None  # base URL of the service API/web UI
-    api_key: Optional[str] = None  # bearer/token auth (Grafana, Proxmox, Portainer)
+    api_key: Optional[str] = None  # bearer/token auth (Grafana, Portainer)
     username: Optional[str] = None  # form-login auth (qBittorrent, Sonarr, etc.)
     password: Optional[str] = None  # paired with username
     category: Optional[str] = None  # user-assigned category for grouping tiles

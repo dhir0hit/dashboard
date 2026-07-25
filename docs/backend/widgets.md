@@ -1,8 +1,8 @@
 # `backend/app/widgets.py`
 
 Widget registry — known service types the dashboard can auto-login to.
-Defines the metadata for each widget type (Grafana, Proxmox, qBittorrent,
-etc.) that `ServiceEntry.widget_type` references.
+Defines the metadata for each widget type (Grafana, qBittorrent,
+Portainer, etc.) that `ServiceEntry.widget_type` references.
 
 Each widget definition is a dict with:
 
@@ -26,14 +26,13 @@ Each widget definition is a dict with:
 | `basic` | `api_url` + `username` + `password` | POST with HTTP Basic auth. |
 | `form` | `api_url` + `username` + `password` | POST with `application/x-www-form-urlencoded` body. |
 
-## Built-in widgets (32)
+## Built-in widgets
 
 | id | name | auth_schema |
 |---|---|---|
 | `generic` | Generic link | none |
 | `grafana` | Grafana | form |
 | `prometheus` | Prometheus | none |
-| `proxmox` | Proxmox VE | api_key |
 | `portainer` | Portainer | api_key |
 | `qbit_torrent` | qBittorrent | form |
 | `sonarr` | Sonarr | api_key |

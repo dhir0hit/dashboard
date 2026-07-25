@@ -109,8 +109,11 @@ Same filter logic as `groups` (filter + query), applied to `unlinkedTiles`.
 ### `groups: [string, Tile[]][]`
 
 User tiles only, filtered, then bucketed by guest key
-(`${node} · ${KIND} ${vmid}` for linked tiles, `"Unlinked"` for tiles with
-no `discovered` mapping).
+(`"Unlinked"` for tiles with no `discovered` mapping).
+
+> **Note**: In the Docker-socket discovery model, grouping is derived
+> from the container's available metadata. Tiles without a discovery
+> match still bucket into the `"Unlinked"` group.
 
 ### `stats: Stats`
 
@@ -198,7 +201,7 @@ particle drifts on `(vx, vy)`, wrapping at the canvas borders.
 ### `Hero({ source, count, loading, refreshing, lastRefresh, onRefresh })`
 
 Top header card. Title "Dashboard". Subtitle shows count + source label
-(`"Mock mode"` for `source === "mock"`, `"Proxmox · <host>"` otherwise).
+(`"Mock mode"` for `source === "mock"`, `"Docker"` otherwise).
 Refresh button (icon spins while `refreshing`). Link to `/settings`
 labeled "Manage tiles".
 

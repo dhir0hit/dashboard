@@ -158,7 +158,7 @@ Every mutation goes through the `useSettings` store:
 Tiles can be assigned a free-form **Category** (e.g. "Media", "NAS",
 "Monitoring"). The Settings page groups tiles by category in the sortable
 list, and the HomePage groups tiles by category in the tile grid (falling
-back to the discovered Proxmox host when no category is set).
+back to a default group when no category is set).
 
 Preset categories are offered via an `<datalist>` autocomplete: Media, NAS,
 Monitoring, Downloads, Network, Development, Home Automation, Other. Users

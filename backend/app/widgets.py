@@ -51,15 +51,6 @@ WIDGET_REGISTRY: list[dict[str, Any]] = [
         "description": "Time-series DB. Native UI has no auth (use a reverse proxy for that).",
     },
     {
-        "id": "proxmox",
-        "name": "Proxmox VE",
-        "icon_hint": "proxmox",
-        "auth_schema": "api_key",
-        "login_path": "/api2/json/access",
-        "auth_header_format": "PVEAPIToken={token}",
-        "description": "PVE API token. The dashboard already uses this for discovery; set it here per-tile to deep-link with auth.",
-    },
-    {
         "id": "portainer",
         "name": "Portainer",
         "icon_hint": "portainer",

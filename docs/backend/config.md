@@ -31,45 +31,14 @@ model_config = SettingsConfigDict(
 
 | Field (Python) | Env var | Type | Default | Purpose |
 |---|---|---|---|---|
-| `proxmox_api_url` | `PROXMOX_API_URL` | `str` | `"https://proxmox.local:8006/"` | PVE API endpoint URL. The `_ensure_trailing_slash` validator forces a trailing `/`. |
-| `proxmox_api_token` | `PROXMOX_API_TOKEN` | `str` | `""` | Token string `user!tokenid=secret`. Used by `auth_header` below. |
-| `proxmox_verify_tls` | `PROXMOX_VERIFY_TLS` | `bool` | `False` | Whether to verify PVE's TLS cert. Set false for self-signed homelab CA. |
-| `proxmox_node` | `PROXMOX_NODE` | `str` | `""` | PVE node to query. Empty → `ProxmoxClient.pick_node()` auto-selects. |
-| `ssh_host` | `SSH_HOST` | `str` | `""` | For in-guest Docker discovery over SSH. |
-| `ssh_port` | `SSH_PORT` | `int` | `22` | SSH port. |
-| `ssh_user` | `SSH_USER` | `str` | `"root"` | SSH user. |
-| `ssh_key_file` | `SSH_KEY_FILE` | `str` | `""` | Path inside container to a private key. |
-| `ssh_password` | `SSH_PASSWORD` | `str` | `""` | Alternative to `ssh_key_file`. |
-| `mock` | `MOCK` (alias) | `bool` | `False` | If true, `/api/services` returns mock data instead of querying PVE. **The docker-compose file sets `MOCK=true` in the backend environment, so the running stack defaults to mock mode — but the `Settings` class itself defaults to `False`.** |
+| `docker_sock` | `DOCKER_SOCK` | `str` | `"/var/run/docker.sock"` | Host Docker socket path for local container discovery. Mount into the backend container via a compose volume. |
+| `mock` | `MOCK` (alias) | `bool` | `False` | If true, `/api/services` returns mock data instead of querying Docker. **The docker-compose file sets `MOCK=true` in the backend environment, so the running stack defaults to mock mode — but the `Settings` class itself defaults to `False`.** |
 | `config_db` | `CONFIG_DB` (alias) | `str` | `"data/config.db"` | SQLite path. The `_abs` validator normalizes to an absolute, expanded, resolved path. **The docker-compose stack overrides this via `CONFIG_DB=/data/config.db` (the persistent volume mount); the class default is for local dev.** |
 | `host` | `HOST` | `str` | `"127.0.0.1"` | uvicorn bind host (compose sets `HOST=0.0.0.0`). |
 | `port` | `PORT` | `int` | `8000` | uvicorn bind port. |
 
-#### Properties
-
-##### `auth_header -> dict[str, str]`
-
-Returns `{"Authorization": f"PVEAPIToken={proxmox_api_token}"}` when the
-token is set, `{}` otherwise. `ProxmoxClient.__init__` reads this once and
-reuses it for every request.
-
-##### `token_user -> str`
-
-Extracts the username portion (before `!`) from the token, or `""` when
-the token has no `!`. Used for diagnostics; not load-bearing for actual
-PVE auth.
-
-##### `base_url -> str`
-
-Computes the API root URL. Strips the trailing slash from
-`proxmox_api_url`, then ensures it ends with `/api2/json` (PVE's REST
-root). If the URL already ends with `/api2/json`, it's returned as-is.
-
 #### Validators
 
-- `@field_validator("proxmox_api_url")` `_ensure_trailing_slash` — strips
-  whitespace and forces a trailing `/`. So `"https://pve:8006"` becomes
-  `"https://pve:8006/"`.
 - `@field_validator("config_db")` `_abs` — resolves the path to absolute
   via `Path(v).expanduser().resolve()`. So `~/config.db` becomes
   `/root/config.db`; relative paths are resolved against CWD.
@@ -107,13 +76,13 @@ def reload_settings() -> Settings:
 - **No reload mechanism in the running app**: `lru_cache` means env
   changes require a process restart. `reload_settings()` exists but isn't
   called from any route. Restart the container to pick up new env vars.
-- **Secrets in the env**: `proxmox_api_token` and `ssh_password` are
-  read from env vars. They are never written to the SQLite config
-  database; only the deduplicated store of tiles/theme/etc. is persisted.
+- **No secrets in the env**: the only env vars are the Docker socket path
+  and mock toggle — no tokens or passwords. All website settings (tiles,
+  theme, etc.) are persisted in the SQLite config database.
 - **`mock` defaults to `False` in the class, `True` in compose** — the
   `docker-compose.yml` `environment:` block on the backend service
   explicitly sets `MOCK=true` so the stack boots out-of-the-box. Flip
-  `MOCK=false` and provide a real token to talk to PVE.
+  `MOCK=false` to enable real Docker discovery.
 - **`config_db` defaults to a project path, overridden in compose** —
   the docker compose stack mounts `dashboard-config:/data` and sets
   `CONFIG_DB=/data/config.db` so SQLite persists. In local dev without
@@ -123,10 +92,6 @@ def reload_settings() -> Settings:
   is read directly by `wallpapers.py` via `os.environ.get("WALLPAPER_DIR", ...)`,
   not through the `Settings` class. It defaults to `/app/wallpapers` in Docker
   (set in `docker-compose.yml`) or `<project>/backend/wallpapers` locally.
-- **`base_url` adds `/api2/json`** — PVE's REST root path. Every
-  `ProxmoxClient` request prepends `base_url`; if you point
-  `PROXMOX_API_URL` at `https://pve.local:8006/api2/json/` directly,
-  `base_url` returns it as-is (no double-suffix).
 
 ---
 

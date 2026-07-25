@@ -1,13 +1,13 @@
 # `backend/app/mock_data.py`
 
 > **Note**: As of the latest update, `MOCK_SERVICES` is an empty list — the
-dashboard starts with a clean tile grid. Users add their own tiles via the
-Settings page. This avoids pre-populating the dashboard with unrelated
-default services.
+> dashboard starts with a clean tile grid. Users add their own tiles via the
+> Settings page. This avoids pre-populating the dashboard with unrelated
+> default services.
 
 
 Deterministic mock dataset so `/api/services` and
-`/api/services/{id}/health` work without a real Proxmox host. Active when
+`/api/services/{id}/health` work without a real Docker host. Active when
 `Settings.mock == True` (the compose default).
 
 ## Public constants
@@ -17,11 +17,11 @@ Deterministic mock dataset so `/api/services` and
 Three hardcoded `Service` objects representing a typical *arr stack, each
 with a distinct status so the UI exercises every code path:
 
-| id | name | node | vmid | kind | status | image | ports | icon_hint |
-|---|---|---|---|---|---|---|---|---|
-| `pve-lxc-100-docker-sonarr` | sonarr | pve | 100 | lxc | running | `lscr.io/linuxserver/sonarr:latest` | `:8989` | sonarr |
-| `pve-lxc-100-docker-radarr` | radarr | pve | 100 | lxc | running | `lscr.io/linuxserver/radarr:latest` | `:7878` | radarr |
-| `pve-lxc-101-docker-lidarr` | lidarr | pve | 101 | lxc | stopped | `lscr.io/linuxserver/lidarr:latest` | `:8686` | lidarr |
+| id | name | status | image | ports | icon_hint |
+|---|---|---|---|---|---|
+| `docker-sonarr` | sonarr | running | `lscr.io/linuxserver/sonarr:latest` | `:8989` | sonarr |
+| `docker-radarr` | radarr | running | `lscr.io/linuxserver/radarr:latest` | `:7878` | radarr |
+| `docker-lidarr` | lidarr | stopped | `lscr.io/linuxserver/lidarr:latest` | `:8686` | lidarr |
 
 ### `MOCK_HEALTH: dict[str, ServiceHealth]`
 
@@ -63,10 +63,10 @@ treats 404 as "container not discovered" and shows the unlinked state.
 
 ## Conventions
 
-- **Stable ids**: the ids are deliberately named
-  `<node>-<kind>-<vmid>-docker-<name>` to match the shape real discovery
-  produces. This means the frontend's Settings-page "container_id" linker
-  dropdown works unchanged in mock mode.
+- **Stable ids**: the ids are deliberately named `docker-<name>` to match
+  the shape real discovery produces. This means the frontend's
+  Settings-page "container_id" linker dropdown works unchanged in mock
+  mode.
 - **No randomness**: the dataset is fixed at module load. Every
   `_gather_real_services` call in mock mode sees the same three services
   and the same health entries. `uptime_seconds` is `126_345` (~1.5 days)

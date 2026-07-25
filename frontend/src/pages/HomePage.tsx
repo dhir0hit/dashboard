@@ -174,10 +174,10 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
     });
     const buckets = new Map<string, Tile[]>();
     for (const t of filtered) {
-      // Use user-assigned category first, then discovered host, then "Unlinked"
+      // Use user-assigned category first, then discovered name, then "Unlinked"
       const key = t.entry.category?.trim()
         || (t.discovered
-          ? `${t.discovered.node} · ${t.discovered.kind.toUpperCase()} ${t.discovered.vmid}`
+          ? t.discovered.name
           : "Unlinked");
       buckets.set(key, [...(buckets.get(key) ?? []), t]);
     }
@@ -615,7 +615,7 @@ function Hero({
   lastRefresh: number | null;
   onRefresh: () => void;
 }) {
-  const sourceLabel = source === "mock" ? "Mock mode" : source ? `Proxmox · ${source}` : "—";
+  const sourceLabel = source === "mock" ? "Mock mode" : source ? `${source}` : "—";
   return (
     <header className="glass flex flex-wrap items-end justify-between gap-3 p-5">
       <div>
@@ -870,7 +870,7 @@ function TileCard({
           )}
           {discovered && (
             <span className="chip border border-white/10 bg-black/30 text-slate-300">
-              {discovered.kind.toUpperCase()} {discovered.vmid}
+              {discovered.name}
             </span>
           )}
           {!discovered && entry.container_id && (
@@ -1193,5 +1193,5 @@ function iconForHint(hint?: string): string {
 function makeBestGuessUrl(s: DiscoveredService): string {
   const p = s.ports?.[0];
   if (!p) return "";
-  return `http://${s.node}.local:${p.host}`;
+  return `http://localhost:${p.host}`;
 }

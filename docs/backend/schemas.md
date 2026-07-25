@@ -17,13 +17,6 @@ Container status reported by discovery or health polling.
 | `PAUSED` | Container paused (Docker `paused` state). |
 | `UNKNOWN` | Status couldn't be determined. |
 
-### `ContainerKind(str, Enum)`
-
-| Value | Meaning |
-|---|---|
-| `LXC` | Proxmox Linux container. |
-| `QEMU` | Proxmox virtual machine. |
-
 ## Discovery models
 
 ### `PortMapping`
@@ -41,15 +34,12 @@ A single published port on a discovered container.
 
 ### `Service`
 
-A single discoverable Docker container on a PVE guest.
+A single discoverable Docker container found via the local Docker socket.
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `id` | `str` | required | Stable id, e.g. `<node>-<kind>-<vmid>-docker-<name>`. |
+| `id` | `str` | required | Stable id, e.g. `docker-<container_name>`. |
 | `name` | `str` | required | Container name. |
-| `node` | `str` | required | PVE node. |
-| `vmid` | `int` | required | Guest VMID. |
-| `kind` | `ContainerKind` | required | `lxc` or `qemu`. |
 | `status` | `ServiceStatus` | `UNKNOWN` | Current status. |
 | `image` | `str` | `""` | Docker image ref. |
 | `ports` | `list[PortMapping]` | `[]` | Published ports. |
@@ -81,7 +71,7 @@ returns this shape.
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `services` | `list[Service]` | required | All discovered services. |
-| `source` | `str` | `"proxmox"` | `"mock"` or `"proxmox:<host_label>"`. |
+| `source` | `str` | `"docker_container"` | `"mock"` or `"docker_container"`. |
 | `count` | `int` | `0` | `len(services)`. |
 
 ## Bookmarks
@@ -142,9 +132,9 @@ Widget integration fields (`widget_type`, `api_url`, `api_key`, `username`,
 | `icon` | `Optional[str]` | `None` | Emoji or short hint. |
 | `container_id` | `Optional[str]` | `None` | Linked `Service.id`. |
 | `display_order` | `int` | `0` | Sort key. |
-| `widget_type` | `Optional[str]` | `None` | One of `WIDGET_REGISTRY` ids (`"grafana"`, `"proxmox"`, etc.). |
+| `widget_type` | `Optional[str]` | `None` | One of `WIDGET_REGISTRY` ids (`"grafana"`, `"portainer"`, etc.). |
 | `api_url` | `Optional[str]` | `None` | Base URL of the service API/web UI. |
-| `api_key` | `Optional[str]` | `None` | Bearer/token auth (Grafana, Proxmox, Portainer). |
+| `api_key` | `Optional[str]` | `None` | Bearer/token auth (Grafana, Portainer, Sonarr). |
 | `username` | `Optional[str]` | `None` | Form-login / basic-auth username (qBittorrent, Sonarr). |
 | `password` | `Optional[str]` | `None` | Paired with `username`. |
 
