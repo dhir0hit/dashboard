@@ -141,6 +141,12 @@ function AppContent() {
   useEffect(() => { void load(); }, [load]);
   // Scroll to top on route change — feels much better on mobile.
   useEffect(() => { window.scrollTo({ top: 0, behavior: "smooth" }); }, [location.pathname]);
+  // Dynamic document title per route — browser tab reflects the current page.
+  useEffect(() => {
+    const route = NAV.find((n) => (n.end ? location.pathname === n.to : location.pathname.startsWith(n.to)));
+    const label = route?.label ?? "Dashboard";
+    document.title = label === "Home" ? "Dashboard" : `${label} · Dashboard`;
+  }, [location.pathname]);
 
   return (
     <>
