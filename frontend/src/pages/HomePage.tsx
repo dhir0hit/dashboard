@@ -282,30 +282,14 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
   }, []);
 
   const pollHealth = useCallback(async () => {
-    // Collect the discovered service IDs to poll. For tiles linked by
-    // container_id, use it directly. For tiles linked by container_name
-    // only, resolve the discovered service id via the name lookup map.
-    const linked = tiles
-      .map((t) => {
-        if (t.entry.container_id) return t.entry.container_id;
-        if (t.entry.container_name && t.discovered) return t.discovered.id;
-        // Auto-linked by name: poll health using the discovered service id.
-        if (t.discovered) return t.discovered.id;
-        return undefined;
-      })
-      .filter((id): id is string => !!id);
-    if (linked.length === 0) return;
-    const updates: Record<string, ServiceHealth> = {};
-    await Promise.all(
-      linked.map(async (id) => {
-        const h = await api.getServiceHealth(id);
-        if (h) updates[id] = h;
-      })
-    );
-    if (mountedRef.current && Object.keys(updates).length) {
-      setHealthById((prev) => ({ ...prev, ...updates }));
+    // Batch health: single /api/services/health call instead of N parallel
+    // per-tile calls. Backend uses cached discovery (10s TTL) so this is
+    // essentially free after the first call.
+    const batch = await api.getAllHealth();
+    if (mountedRef.current && Object.keys(batch).length) {
+      setHealthById((prev) => ({ ...prev, ...batch }));
     }
-  }, [tiles]);
+  }, []);
 
   useEffect(() => {
     void pollHealth();

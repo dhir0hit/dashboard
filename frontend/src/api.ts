@@ -153,6 +153,18 @@ export const api = {
     }
   },
 
+  async getAllHealth(): Promise<Record<string, ServiceHealth>> {
+    try {
+      const res = await fetch(`${API_BASE}/api/services/health`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok) return {};
+      return jsonOrThrow<Record<string, ServiceHealth>>(res);
+    } catch {
+      return {};
+    }
+  },
+
   // ─────────────────────────────────────────────────────────────────────
   // Root-task (t_c8aa03) endpoints: bookmarks, custom themes, cron, search.
   // ─────────────────────────────────────────────────────────────────────

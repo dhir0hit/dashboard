@@ -87,7 +87,41 @@ def _startup() -> None:
     log.info("Dashboard backend ready (mock=%s, pve=%s)", s.mock, s.proxmox_api_url)
 
 
+import time as _time
+
 # ---------------------------------------------------------------- discovery
+# Cache Docker discovery results to avoid re-SSHing on every health check.
+# TTL=10s matches the health poll interval — fresh enough, 10x fewer SSH calls.
+_DISCOVERY_CACHE: dict[str, list] = {}  # source -> services
+_DISCOVERY_CACHE_TS: dict[str, float] = {}  # source -> timestamp
+_DISCOVERY_TTL = 10.0  # seconds
+
+
+def _get_cached_services() -> tuple[list, str]:
+    """Return cached Docker services, refreshing via SSH if older than TTL."""
+    s = get_settings()
+    if s.proxmox_api_token:
+        source_key = "proxmox"
+        if source_key in _DISCOVERY_CACHE and _time.time() - _DISCOVERY_CACHE_TS[source_key] < _DISCOVERY_TTL:
+            return _DISCOVERY_CACHE[source_key], source_key
+        services, source = _gather_real_services()
+        _DISCOVERY_CACHE[source_key] = services
+        _DISCOVERY_CACHE_TS[source_key] = _time.time()
+        return services, source
+    else:
+        from .docker_discover import discover_docker_services, hostname_to_node
+        from .schemas import ContainerKind
+        node = hostname_to_node()
+        vmid = s.ssh_vmid if s.ssh_host else 0
+        source_key = f"docker:{node}:{vmid}"
+        if source_key in _DISCOVERY_CACHE and _time.time() - _DISCOVERY_CACHE_TS[source_key] < _DISCOVERY_TTL:
+            return _DISCOVERY_CACHE[source_key], source_key
+        services = discover_docker_services(s, node, vmid, ContainerKind.LXC)
+        _DISCOVERY_CACHE[source_key] = services
+        _DISCOVERY_CACHE_TS[source_key] = _time.time()
+        return services, source_key
+
+
 def _gather_real_services() -> tuple[list[Service], str]:
     """Return services from a real PVE host. Raises ProxmoxError on failure."""
     s = get_settings()
@@ -132,25 +166,8 @@ def get_services() -> ServicesResponse:
     s = get_settings()
     if s.mock:
         return ServicesResponse(services=MOCK_SERVICES, source="mock", count=len(MOCK_SERVICES))
-    # If no Proxmox token, try direct Docker socket discovery (no PVE needed).
-    if not s.proxmox_api_token:
-        try:
-            from .docker_discover import discover_docker_services, hostname_to_node
-            from .schemas import ContainerKind
-            node = hostname_to_node()
-            vmid = s.ssh_vmid if s.ssh_host else 0
-            svcs = discover_docker_services(s, node, vmid, ContainerKind.LXC)
-            if svcs:
-                return ServicesResponse(services=svcs, source=f"docker:{node}", count=len(svcs))
-            return ServicesResponse(services=[], source="docker:empty", count=0)
-        except Exception as e:
-            log.warning("direct docker discovery failed: %s", e)
-            raise HTTPException(
-                status_code=401,
-                detail="No Proxmox token and Docker discovery failed. Set MOCK=true or provide PROXMOX_API_TOKEN.",
-            )
     try:
-        services, source = _gather_real_services()
+        services, source = _get_cached_services()
     except ProxmoxAuthError as e:
         raise HTTPException(status_code=401, detail=f"proxmox auth failed: {e}") from e
     except ProxmoxError as e:
@@ -171,21 +188,15 @@ def get_service_health(service_id: str) -> HealthResponse:
             return HealthResponse(health=MOCK_HEALTH[service_id])
         raise HTTPException(status_code=404, detail=f"unknown service id: {service_id}")
 
-    # Real mode: fetch fresh service list and report health for the requested id.
+    # Real mode: use cached discovery (refreshes every 10s) instead of re-SSHing
     try:
-        if s.proxmox_api_token:
-            services, _ = _gather_real_services()
-        else:
-            # Direct Docker discovery (no Proxmox)
-            from .docker_discover import discover_docker_services, hostname_to_node
-            from .schemas import ContainerKind
-            node = hostname_to_node()
-            vmid = s.ssh_vmid if s.ssh_host else 0
-            services = discover_docker_services(s, node, vmid, ContainerKind.LXC)
+        services, _ = _get_cached_services()
     except ProxmoxAuthError as e:
         raise HTTPException(status_code=401, detail=f"proxmox auth failed: {e}") from e
     except ProxmoxError as e:
         raise HTTPException(status_code=502, detail=f"proxmox error: {e}") from e
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"docker discovery failed: {e}") from e
 
     match = next((x for x in services if x.id == service_id), None)
     if match is None:
@@ -201,6 +212,39 @@ def get_service_health(service_id: str) -> HealthResponse:
             message="ok" if healthy else f"container {match.status.value}",
         )
     )
+
+
+@app.get(
+    "/api/services/health",
+    tags=["services"],
+    summary="Batch-fetch health for all discovered services in a single request",
+)
+def get_all_health() -> dict:
+    """Return health status for all discovered services at once.
+
+    Uses the cached discovery result (10s TTL) so this is essentially free
+    after the first call — no SSH, no Docker round-trip.
+    Returns ``{service_id: ServiceHealth}``.
+    """
+    s = get_settings()
+    if s.mock:
+        return {sid: h.model_dump() for sid, h in MOCK_HEALTH.items()}
+    try:
+        services, _ = _get_cached_services()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"discovery failed: {e}") from e
+    out: dict[str, dict] = {}
+    for svc in services:
+        healthy = svc.status == ServiceStatus.RUNNING
+        out[svc.id] = {
+            "id": svc.id,
+            "status": svc.status.value,
+            "healthy": healthy,
+            "uptime_seconds": 0,
+            "last_seen": None,
+            "message": "ok" if healthy else f"container {svc.status.value}",
+        }
+    return out
 
 
 # ----------------------------------------------------------------- config
