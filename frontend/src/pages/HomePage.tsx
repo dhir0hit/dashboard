@@ -503,7 +503,7 @@ function BackgroundLayer() {
     <div
       aria-hidden
       className={clsx(
-        "pointer-events-none fixed inset-0 -z-10 overflow-hidden",
+        "pointer-events-none fixed inset-0 z-0 overflow-hidden",
         !enabled && "bg-transparent"
       )}
     >

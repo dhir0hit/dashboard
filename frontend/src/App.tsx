@@ -145,7 +145,7 @@ function AppContent() {
   return (
     <>
       <ThemeApplier />
-      <div className="flex min-h-screen flex-col pb-16 md:pb-0">
+      <div className="relative z-10 flex min-h-screen flex-col pb-16 md:pb-0">
         <Header />
         <MobileTopBar />
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 md:px-6 md:py-8">
