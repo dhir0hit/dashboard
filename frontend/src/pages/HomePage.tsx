@@ -316,12 +316,45 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
   // --- service info polling ────────────────────────────────────────
   // Single batch call to /api/tiles/info — backend fetches all widget
   // stats concurrently and returns {tile_id: info_dict} in one response.
+  // Results are cached in localStorage with a 30s TTL so repeat page
+  // loads / navigation show cached data instantly while fresh data
+  // loads in the background.
+  const INFO_CACHE_KEY = "dashboard_tile_info_cache";
+  const INFO_CACHE_TTL = 30_000; // 30 seconds
+
+  const loadCachedInfo = (): Record<string, ServiceInfo> => {
+    try {
+      const raw = localStorage.getItem(INFO_CACHE_KEY);
+      if (!raw) return {};
+      const cached = JSON.parse(raw) as { ts: number; data: Record<string, ServiceInfo> };
+      if (Date.now() - cached.ts < INFO_CACHE_TTL) return cached.data;
+    } catch { /* ignore parse errors */ }
+    return {};
+  };
+
+  const saveCachedInfo = (data: Record<string, ServiceInfo>) => {
+    try {
+      localStorage.setItem(INFO_CACHE_KEY, JSON.stringify({ ts: Date.now(), data }));
+    } catch { /* storage full or unavailable */ }
+  };
+
+  // Hydrate from cache immediately on mount (before network round-trip)
+  useEffect(() => {
+    const cached = loadCachedInfo();
+    if (Object.keys(cached).length) setInfoById(cached);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const pollInfo = useCallback(async () => {
     const widgetTiles = tiles.filter((t) => t.entry.widget_type);
     if (widgetTiles.length === 0) return;
     const batch = await api.getAllTileInfo();
     if (mountedRef.current && batch && Object.keys(batch).length) {
-      setInfoById((prev) => ({ ...prev, ...batch }));
+      setInfoById((prev) => {
+        const merged = { ...prev, ...batch };
+        saveCachedInfo(merged);
+        return merged;
+      });
     }
   }, [tiles]);
 

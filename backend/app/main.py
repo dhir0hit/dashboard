@@ -722,10 +722,11 @@ def tiles_info_batch() -> dict:
     results: dict[str, dict] = {}
     with cf.ThreadPoolExecutor(max_workers=min(8, len(widget_tiles))) as pool:
         future_map = {pool.submit(fetch_tile_info, e): e.id for e in widget_tiles}
-        for future in cf.as_completed(future_map, timeout=15):
+        # Wait at most 4s total — slow tiles (unreachable services) don't block fast ones
+        for future in cf.as_completed(future_map, timeout=4):
             tid = future_map[future]
             try:
-                r = future.result(timeout=6)
+                r = future.result(timeout=1)
                 if r and "widget_type" in r:
                     results[tid] = r
             except Exception:

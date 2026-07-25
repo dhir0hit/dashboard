@@ -465,7 +465,14 @@ def _prometheus_info(resp: dict, _widget: dict) -> dict:
 
 
 def _uptimekuma_info(resp: dict, _widget: dict) -> dict:
-    """Uptime Kuma: monitors up/down/paused."""
+    """Uptime Kuma: monitors up/down/paused.
+
+    Uses /metrics (Prometheus exposition format). The response is text,
+    not JSON — but fetch_tile_info calls resp.json() so this parser only
+    runs on successful JSON. For /metrics (non-JSON), the caller returns
+    a 'non-JSON response' error before reaching here. We keep this parser
+    as a fallback for future JSON endpoints.
+    """
     out: dict[str, Any] = {}
     if "stats" in resp:
         stats = resp["stats"]
@@ -713,7 +720,7 @@ INFO_REGISTRY: dict[str, dict[str, Any]] = {
         "info_parser": _prometheus_info,
     },
     "uptimekuma": {
-        "info_endpoint": "/api/status-page/heart",
+        "info_endpoint": "/metrics",
         "info_parser": _uptimekuma_info,
     },
     # ── Container / infrastructure ──
@@ -823,7 +830,7 @@ def fetch_tile_info(entry: "ServiceEntry") -> dict:
         auth = (entry.username, entry.password or "")
 
     try:
-        resp = _httpx.get(url, headers=headers, auth=auth, timeout=5.0, verify=False)
+        resp = _httpx.get(url, headers=headers, auth=auth, timeout=3.0, verify=False)
     except _httpx.HTTPError as e:
         return {"error": f"network error: {e}", "widget_type": widget_id}
 
