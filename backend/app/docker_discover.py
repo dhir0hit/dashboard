@@ -1,17 +1,22 @@
 """Docker container discovery via the local Docker socket.
 
 The backend runs inside a Docker container with ``/var/run/docker.sock`` mounted.
-We call ``docker ps`` locally and shape each container into a Service object.
+We call the Docker Engine API directly over the Unix socket (no `docker` CLI
+needed) and shape each container into a Service object.
 icon_hint is inferred from the image name (sonarr, radarr, postgres, redis, ...).
 """
 from __future__ import annotations
 
-import shutil
-import subprocess
+import os
 from dataclasses import dataclass
-from pathlib import Path
+
+import httpx
 
 from .schemas import PortMapping, Service, ServiceStatus
+
+# --- config -----------------------------------------------------------------
+DOCKER_SOCK = os.getenv("DOCKER_SOCK", "/var/run/docker.sock")
+DOCKER_API_VERSION = "v1.43"  # widely supported; falls back gracefully
 
 # --- icon inference --------------------------------------------------------
 _ICON_MAP = {
@@ -26,6 +31,12 @@ _ICON_MAP = {
     "homeassistant": "home-assistant", "home-assistant": "home-assistant",
     "pihole": "pihole", "adguard": "adguard", "uptime-kuma": "uptime-kuma",
     "jellyfin": "jellyfin", "kavita": "kavita", "calibre": "calibre",
+    "vaultwarden": "vaultwarden", "paperless": "paperless",
+    "code-server": "code-server", "syncthing": "syncthing",
+    "filebrowser": "filebrowser", "stirling": "stirling-pdf",
+    "dozzle": "dozzle", "watchtower": "watchtower", "photoprism": "photoprism",
+    "homepage": "homepage", "adguardhome": "adguard", "tailscale": "tailscale",
+    "linkwarden": "linkwarden", "joplin": "joplin", "actualbudget": "actual",
 }
 
 
@@ -40,128 +51,93 @@ def _icon_hint(image: str) -> str:
     return "docker"
 
 
-def _parse_ports(raw: str) -> list[PortMapping]:
-    """Parse docker's Ports column, e.g. '0.0.0.0:3000->3000/tcp, :::3000->3000/tcp'."""
-    if not raw or raw == "0":
-        return []
+def _parse_ports(container: dict) -> list[PortMapping]:
+    """Parse Docker API PortBindings from container.HostConfig.PortBindings."""
     out: list[PortMapping] = []
     seen: set[tuple[int, int, str]] = set()
-    for chunk in raw.split(","):
-        chunk = chunk.strip()
-        if "->" not in chunk:
+    bindings = (container.get("HostConfig") or {}).get("PortBindings") or {}
+    for cport_str, host_list in bindings.items():
+        if not host_list:
             continue
+        # cport_str like "3000/tcp" or "8080/udp"
         try:
-            left, right = chunk.split("->", 1)
-            host_port = int(left.rsplit(":", 1)[-1])
-            container_port_part = right.split("/", 1)[0]
-            container_port = int(container_port_part)
-            proto = right.split("/", 1)[1] if "/" in right else "tcp"
+            cp, proto = cport_str.split("/", 1)
+        except ValueError:
+            cp, proto = cport_str, "tcp"
+        try:
+            container_port = int(cp)
+        except ValueError:
+            continue
+        for hb in host_list:
+            try:
+                host_port = int(hb.get("HostPort", 0))
+            except (ValueError, TypeError):
+                continue
+            if host_port == 0:
+                continue
             key = (host_port, container_port, proto)
             if key in seen:
                 continue
             seen.add(key)
             out.append(PortMapping(host=host_port, container=container_port, protocol=proto))
-        except (ValueError, IndexError):
-            continue
     return out
 
 
-# --- docker ps output row --------------------------------------------------
-@dataclass
-class DockerRow:
-    name: str
-    image: str
-    status: str  # "Up 2 hours", "Exited (0) 3 days ago", etc.
-    ports: str
-    labels: str = ""
-
-
-def _status_from(status_str: str) -> ServiceStatus:
-    s = status_str.lower()
-    if s.startswith("up"):
+def _status_from(state: dict) -> ServiceStatus:
+    status = (state.get("Status") or "").lower()
+    if status == "running":
         return ServiceStatus.RUNNING
-    if s.startswith("paused"):
+    if status == "paused":
         return ServiceStatus.PAUSED
-    if s.startswith("exited") or s.startswith("restarting"):
+    if status in ("exited", "created", "dead", "restarting"):
         return ServiceStatus.STOPPED
     return ServiceStatus.UNKNOWN
 
 
-# --- docker ps invocation --------------------------------------------------
-_DOCKER_PS_FORMAT = (
-    "{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\t{{.Labels}}"
-)
-
-
-def _build_docker_ps_cmd() -> str:
-    return f"docker ps -a --format '{_DOCKER_PS_FORMAT}'"
-
-
-def _parse_ps(stdout: str) -> list[DockerRow]:
-    rows: list[DockerRow] = []
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line or line.lower().startswith("error"):
-            continue
-        parts = line.split("\t")
-        if len(parts) < 4:
-            continue
-        name = parts[0].lstrip("/")
-        image = parts[1]
-        status = parts[2]
-        ports = parts[3] if len(parts) > 3 else ""
-        labels = parts[4] if len(parts) > 4 else ""
-        rows.append(DockerRow(name, image, status, ports, labels))
-    return rows
-
-
-def _labels_to_dict(labels: str) -> dict[str, str]:
-    out: dict[str, str] = {}
-    if not labels:
-        return out
-    # docker emits labels as "key1=val1,key2=val2,..." when multiple.
-    for kv in labels.split(","):
-        if "=" in kv:
-            k, v = kv.split("=", 1)
-            out[k.strip()] = v.strip()
-    return out
-
-
-# --- shared row → Service --------------------------------------------------
-def _rows_to_services(stdout: str) -> list[Service]:
-    services: list[Service] = []
-    for row in _parse_ps(stdout):
-        status = _status_from(row.status)
-        svc = Service(
-            id=f"docker-{row.name}",
-            name=row.name,
-            status=status,
-            image=row.image,
-            ports=_parse_ports(row.ports),
-            icon_hint=_icon_hint(row.image),
-            labels=_labels_to_dict(row.labels),
-        )
-        services.append(svc)
-    return services
-
-
 # --- public entry point ----------------------------------------------------
 def discover_docker_services() -> list[Service]:
-    """Discover Docker containers via the local Docker socket.
+    """Discover Docker containers via the local Docker socket (Engine API).
 
     Returns a list of Service objects, one per container. Returns an empty
-    list if Docker is not available (no CLI, no socket).
+    list if the socket is unavailable or the API call fails.
     """
-    if not shutil.which("docker"):
-        if not Path("/var/run/docker.sock").exists():
-            return []
-    cmd = _build_docker_ps_cmd()
+    if not os.path.exists(DOCKER_SOCK):
+        return []
+
+    transport = httpx.HTTPTransport(uds=DOCKER_SOCK)
+    base = f"http://localhost/{DOCKER_API_VERSION}"
+
     try:
-        r = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=30
+        with httpx.Client(transport=transport, base_url=base, timeout=10) as client:
+            # GET /containers/json?all=1
+            r = client.get("/containers/json", params={"all": "true"})
+            if r.status_code != 200:
+                return []
+            containers = r.json()
+    except (httpx.HTTPError, OSError):
+        return []
+
+    services: list[Service] = []
+    for c in containers:
+        name = (c.get("Names") or [""])[0].lstrip("/")
+        if not name:
+            continue
+        image = c.get("Image", "")
+        # Docker API returns State as a string ("running", "exited", etc.)
+        state_str = c.get("State", "")
+        status = _status_from({"Status": state_str} if isinstance(state_str, str) else state_str)
+        ports = _parse_ports(c)
+        labels = c.get("Labels") or {}
+
+        svc = Service(
+            id=f"docker-{name}",
+            name=name,
+            status=status,
+            image=image,
+            ports=ports,
+            icon_hint=_icon_hint(image),
+            labels=labels if isinstance(labels, dict) else dict(labels),
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return []
-    if r.returncode != 0:
-        return []
-    return _rows_to_services(r.stdout)
+        services.append(svc)
+
+    return services
