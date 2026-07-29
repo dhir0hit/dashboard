@@ -352,6 +352,7 @@ function TileRow({
 }) {
   const [editing, setEditing] = useState(false);
   const icon = service.icon?.trim() || "🧩";
+  const iconUrl = service.icon_url?.trim();
 
   if (editing && onUpdate) {
     return (
@@ -386,7 +387,21 @@ function TileRow({
         </button>
       )}
       <span className="grid h-10 w-10 place-items-center rounded-lg bg-white/5 text-lg">
-        {icon}
+        {iconUrl ? (
+          <img
+            src={iconUrl}
+            alt={service.name}
+            className="h-7 w-7 object-contain"
+            onError={(e) => {
+              // If the custom icon fails to load, fall back to emoji.
+              (e.currentTarget as HTMLImageElement).style.display = "none";
+              const fallback = (e.currentTarget.parentElement as HTMLElement);
+              if (fallback) fallback.textContent = icon;
+            }}
+          />
+        ) : (
+          icon
+        )}
       </span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium text-white">{service.name}</div>
