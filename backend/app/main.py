@@ -685,6 +685,36 @@ def tile_info(service_id: str) -> dict:
     return result
 
 
+@app.post(
+    "/api/tiles/{service_id}/control",
+    tags=["tiles"],
+    summary="Send a control command (play/pause/playpause) to a tile's service",
+)
+def tile_control(service_id: str, body: dict) -> dict:
+    """Control a media widget (currently only Jellyfin).
+
+    Body: ``{"action": "play" | "pause" | "playpause"}``.
+
+    Returns ``{"ok": true, "paused": bool}`` on success, or
+    ``{"error": "..."}`` on failure.
+    """
+    from .widgets import control_jellyfin
+
+    action = (body.get("action") or "").strip()
+    if action not in ("play", "pause", "playpause"):
+        raise HTTPException(status_code=400, detail="action must be 'play', 'pause', or 'playpause'")
+
+    s = get_settings()
+    cfg = latest(s.config_db) or DashboardConfig()
+    entry = next((e for e in cfg.services if e.id == service_id), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"unknown tile id: {service_id}")
+    if entry.widget_type != "jellyfin":
+        raise HTTPException(status_code=400, detail=f"control not supported for widget type '{entry.widget_type}'")
+
+    return control_jellyfin(entry, action)
+
+
 @app.get(
     "/api/tiles/info",
     tags=["tiles"],
@@ -809,32 +839,43 @@ def tile_ping(service_id: str) -> dict:
     if entry is None:
         raise HTTPException(status_code=404, detail=f"unknown tile id: {service_id}")
 
-    url = (entry.url or "").strip()
-    if not url:
+    # Try the click-through URL first; fall back to api_url (often a
+    # directly-reachable Tailscale IP) when the primary URL doesn't resolve.
+    # This handles two cases: (1) the primary URL uses MagicDNS that the
+    # backend host can't resolve (no Tailscale on the backend), and
+    # (2) the dashboard is served over HTTPS so the browser blocks the
+    # frontend's mixed-content HTTP fetch and defers to this backend ping.
+    candidates = [u for u in ((entry.url or "").strip(), (entry.api_url or "").strip()) if u]
+    if not candidates:
         return {"reachable": False, "status_code": 0, "response_ms": 0, "message": "no URL configured"}
 
-    if not url.startswith("http://") and not url.startswith("https://"):
-        url = "http://" + url
-
     import time
-    t0 = time.monotonic()
-    try:
-        resp = httpx.head(url, timeout=8.0, follow_redirects=True, verify=False,
-                         headers={"User-Agent": "Dashboard-Ping/1.0"})
-        elapsed = int((time.monotonic() - t0) * 1000)
-        reachable = resp.status_code < 400
-        return {
-            "reachable": reachable,
-            "status_code": resp.status_code,
-            "response_ms": elapsed,
-            "message": "ok" if reachable else f"HTTP {resp.status_code}",
-        }
-    except httpx.ConnectError:
-        return {"reachable": False, "status_code": 0, "response_ms": 0, "message": "connection refused"}
-    except httpx.TimeoutException:
-        return {"reachable": False, "status_code": 0, "response_ms": 8000, "message": "timeout"}
-    except Exception as e:
-        return {"reachable": False, "status_code": 0, "response_ms": 0, "message": str(e)[:100]}
+    for url in candidates:
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "http://" + url
+        t0 = time.monotonic()
+        try:
+            resp = httpx.head(url, timeout=8.0, follow_redirects=True, verify=False,
+                             headers={"User-Agent": "Dashboard-Ping/1.0"})
+            elapsed = int((time.monotonic() - t0) * 1000)
+            code = resp.status_code
+            # 401/403 mean the service is alive but requires auth — treat as
+            # reachable. Anything < 400 is a clear success. 5xx and network
+            # errors are the only real "unreachable" signals.
+            reachable = code < 400 or code in (401, 403)
+            return {
+                "reachable": reachable,
+                "status_code": code,
+                "response_ms": elapsed,
+                "message": "ok" if reachable else f"HTTP {code}",
+            }
+        except httpx.ConnectError:
+            continue
+        except httpx.TimeoutException:
+            continue
+        except Exception:
+            continue
+    return {"reachable": False, "status_code": 0, "response_ms": 0, "message": "connection refused"}
 
 
 # ------------------------------------------------------------- health root

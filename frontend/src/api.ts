@@ -275,6 +275,31 @@ export const api = {
     }
   },
 
+  // Send a play/pause/playpause control command to a tile's media widget.
+  // Currently only Jellyfin is supported. Returns {"ok":true,"paused":bool}
+  // on success or {"error":"..."} on failure.
+  async controlTile(serviceId: string, action: "play" | "pause" | "playpause"): Promise<{ ok?: boolean; paused?: boolean; error?: string }> {
+    try {
+      const res = await fetch(`${API_BASE}/api/tiles/${encodeURIComponent(serviceId)}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      return jsonOrThrow(res);
+    } catch (err) {
+      return { error: (err as Error).message };
+    }
+  },
+
+  // Server-side ping — used as a fallback when the dashboard is served over
+  // HTTPS and the tile URL is HTTP (mixed-content blocks the browser fetch).
+  // The backend tries entry.url then entry.api_url, so this also works when
+  // the backend host can't resolve a MagicDNS name but can reach the IP.
+  async pingTile(serviceId: string): Promise<{ reachable: boolean; status_code: number; response_ms: number; message: string }> {
+    const res = await fetch(`${API_BASE}/api/tiles/${encodeURIComponent(serviceId)}/ping`);
+    return jsonOrThrow(res);
+  },
+
   async autoIcon(url: string): Promise<{ icon_url: string | null }> {
     try {
       const res = await fetch(`${API_BASE}/api/tiles/auto-icon`, {

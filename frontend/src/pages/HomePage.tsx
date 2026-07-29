@@ -7,7 +7,9 @@ import {
   Boxes,
   CheckCircle2,
   ExternalLink,
+  Pause,
   PauseCircle,
+  Play,
   RefreshCw,
   Search,
   Settings as SettingsIcon,
@@ -254,6 +256,8 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
 
   // --- stats ------------------------------------------------------------
   // Includes unlinked discovered services so the cards and counts agree.
+  // "Unlinked" counts discovered services with no user tile claim — it's
+  // separate from `unknown` status (tiles whose status couldn't be determined).
   const stats = useMemo(() => {
     let running = 0,
       stopped = 0,
@@ -266,7 +270,14 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
       else if (s === "paused") paused++;
       else unknown++;
     }
-    return { total: tilesWithPing.length + unlinkedTiles.length, running, stopped, paused, unknown };
+    return {
+      total: tilesWithPing.length + unlinkedTiles.length,
+      running,
+      stopped,
+      paused,
+      unknown,
+      unlinked: unlinkedTiles.length,
+    };
   }, [tilesWithPing, unlinkedTiles]);
 
   // --- health polling ---------------------------------------------------
@@ -352,17 +363,29 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
   // Pings every tile that has a URL configured. For tiles without a
   // Docker container_id, the ping result drives the effective status
   // (running/stopped) so the tile card always shows a live dot.
+  //
+  // Mixed-content handling: when the dashboard is served over HTTPS and the
+  // tile URL is HTTP, the browser blocks the client-side fetch. Fall back to
+  // the backend /api/tiles/{id}/ping (server-side, same-origin) which also
+  // tries entry.api_url when entry.url doesn't resolve.
+  const pageIsHttps = typeof window !== "undefined" && window.location.protocol === "https:";
   const pollPings = useCallback(async () => {
-    // Ping directly from the browser — no backend round-trip.
-    // Uses fetch with no-cors mode so the browser doesn't block cross-origin.
-    // We can't read the response status (opaque), but we know it's reachable
-    // if the fetch resolves without throwing.
     const pingTiles = tiles.filter((t) => t.entry.url);
     if (pingTiles.length === 0) return;
     const updates: Record<string, PingResult> = {};
     await Promise.all(
       pingTiles.map(async (t) => {
         const url = t.entry.url!.trim();
+        const needsBackendPing = pageIsHttps && url.startsWith("http://");
+        if (needsBackendPing) {
+          try {
+            const r = await api.pingTile(t.entry.id);
+            updates[t.entry.id] = r;
+          } catch {
+            updates[t.entry.id] = { reachable: false, status_code: 0, response_ms: 0, message: "unreachable" };
+          }
+          return;
+        }
         const t0 = performance.now();
         try {
           // Try a real fetch first — works for same-origin or CORS-enabled services
@@ -380,7 +403,7 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
     if (mountedRef.current && Object.keys(updates).length) {
       setPingById((prev) => ({ ...prev, ...updates }));
     }
-  }, [tiles]);
+  }, [tiles, pageIsHttps]);
 
   useEffect(() => {
     void pollPings();
@@ -672,6 +695,7 @@ type Stats = {
   stopped: number;
   paused: number;
   unknown: number;
+  unlinked: number;
 };
 
 function Stats({ stats }: { stats: Stats }) {
@@ -681,7 +705,7 @@ function Stats({ stats }: { stats: Stats }) {
       <StatCard label="Running" value={stats.running} icon={<CheckCircle2 className="h-4 w-4" />} tone="emerald" />
       <StatCard label="Stopped" value={stats.stopped} icon={<XCircle className="h-4 w-4" />} tone="rose" />
       <StatCard label="Paused" value={stats.paused} icon={<PauseCircle className="h-4 w-4" />} tone="amber" />
-      <StatCard label="Unlinked" value={stats.unknown} icon={<Activity className="h-4 w-4" />} tone="violet" />
+      <StatCard label="Unlinked" value={stats.unlinked} icon={<Activity className="h-4 w-4" />} tone="violet" />
     </div>
   );
 }
@@ -737,7 +761,7 @@ function Filters({
     { id: "running", label: "Running", count: stats.running },
     { id: "stopped", label: "Stopped", count: stats.stopped },
     { id: "paused", label: "Paused", count: stats.paused },
-    { id: "unknown", label: "Unlinked", count: stats.unknown },
+    { id: "unknown", label: "Unlinked", count: stats.unlinked },
   ];
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -888,7 +912,7 @@ function TileCard({
           {link && <ArrowUpRight className="h-3.5 w-3.5 text-slate-400 opacity-0 transition group-hover:opacity-100" />}
         </div>
       </div>
-      {info && <ServiceInfoBlock info={info} />}
+      {info && <ServiceInfoBlock info={info} tileId={entry.id} />}
       {ping && !ping.reachable && !discovered && (
         <div className="mt-3 animate-fade-in rounded-lg border border-rose-400/20 bg-rose-400/5 p-2 text-[11px] text-rose-300">
           <div className="flex items-center justify-between">
@@ -1086,7 +1110,7 @@ function formatInfoValue(key: string, val: unknown): string {
   return String(val);
 }
 
-function ServiceInfoBlock({ info }: { info: ServiceInfo }) {
+function ServiceInfoBlock({ info, tileId }: { info: ServiceInfo; tileId: string }) {
   if (!info || info.error) {
     if (info?.error) {
       return (
@@ -1099,27 +1123,108 @@ function ServiceInfoBlock({ info }: { info: ServiceInfo }) {
     return null;
   }
 
-  // Filter out internal keys and object values
-  const entries = Object.entries(info).filter(
-    ([k, v]) => k !== "widget_type" && k !== "error" && k !== "domains" && typeof v !== "object"
-  );
+  // Check for Jellyfin now-playing data
+  const isJellyfin = info.widget_type === "jellyfin";
+  const hasNowPlaying = isJellyfin && "now_playing_title" in info;
 
-  if (entries.length === 0) return null;
+  // Filter out internal keys, object values, and now_playing_* fields
+  // (those are rendered in the dedicated now-playing widget).
+  const entries = Object.entries(info).filter(
+    ([k, v]) =>
+      k !== "widget_type" &&
+      k !== "error" &&
+      k !== "domains" &&
+      !k.startsWith("now_playing_") &&
+      typeof v !== "object"
+  );
 
   return (
     <div className="mt-3 animate-fade-in rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-2 text-[10px] text-slate-300">
-      <div className="mb-1 flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider text-cyan-300">
-        ✧ {info.widget_type}
-      </div>
-      <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
-        {entries.slice(0, 6).map(([key, val]) => (
-          <div key={key} className="flex items-center justify-between gap-1">
-            <span className="text-slate-500">{INFO_LABELS[key] || key}</span>
-            <span className="font-medium tabular-nums text-slate-200">
-              {formatInfoValue(key, val)}
-            </span>
+      {/* Jellyfin now-playing widget */}
+      {hasNowPlaying && <JellyfinNowPlaying info={info} tileId={tileId} />}
+      {/* Regular data key-values */}
+      {entries.length > 0 && (
+        <div className={clsx("grid grid-cols-2 gap-x-2 gap-y-0.5", hasNowPlaying && "mt-2")}>
+          {entries.slice(0, 6).map(([key, val]) => (
+            <div key={key} className="flex items-center justify-between gap-1">
+              <span className="text-slate-500">{INFO_LABELS[key] || key}</span>
+              <span className="font-medium tabular-nums text-slate-200">
+                {formatInfoValue(key, val)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatTime(seconds: number): string {
+  if (!seconds || seconds < 0) return "0:00";
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function JellyfinNowPlaying({ info, tileId }: { info: ServiceInfo; tileId: string }) {
+  const title = (info.now_playing_title as string) || "Unknown";
+  const artist = (info.now_playing_artist as string) || "";
+  const position = (info.now_playing_position as number) ?? 0;
+  const duration = (info.now_playing_duration as number) ?? 0;
+  const paused = (info.now_playing_paused as boolean) ?? false;
+  const [isPaused, setIsPaused] = useState(paused);
+  const [loading, setLoading] = useState(false);
+
+  // Sync external paused state when info refreshes
+  useEffect(() => {
+    setIsPaused(paused);
+  }, [paused]);
+
+  const handleToggle = useCallback(async () => {
+    setLoading(true);
+    const result = await api.controlTile(tileId, "playpause");
+    setLoading(false);
+    if (result.ok) {
+      setIsPaused(result.paused ?? !isPaused);
+    }
+  }, [tileId, isPaused]);
+
+  const pct = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
+
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void handleToggle();
+        }}
+        disabled={loading}
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-cyan-400/20 text-cyan-300 transition hover:bg-cyan-400/30 disabled:opacity-50"
+        title={isPaused ? "Play" : "Pause"}
+      >
+        {loading ? (
+          <RefreshCw className="h-4 w-4 animate-spin" />
+        ) : isPaused ? (
+          <Play className="h-4 w-4" />
+        ) : (
+          <Pause className="h-4 w-4" />
+        )}
+      </button>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[11px] font-semibold text-slate-100">{title}</div>
+        {artist && <div className="truncate text-[9px] text-slate-500">{artist}</div>}
+        <div className="mt-1 flex items-center gap-1.5">
+          <span className="tabular-nums text-[9px] text-slate-500">{formatTime(position)}</span>
+          <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-cyan-400/60 transition-all"
+              style={{ width: `${pct}%` }}
+            />
           </div>
-        ))}
+          <span className="tabular-nums text-[9px] text-slate-500">{formatTime(duration)}</span>
+        </div>
       </div>
     </div>
   );
