@@ -785,6 +785,12 @@ def auto_icon(body: dict):
         base = f"{parsed.scheme}://{parsed.netloc}"
         icon_url = _probe_icon(base, parsed)
         if icon_url:
+            # If the detected icon is served over HTTP, the browser will
+            # block it as mixed content when the dashboard runs on HTTPS.
+            # Wrap it in a same-origin backend proxy so the <img> tag always
+            # loads from the dashboard's own origin.
+            if icon_url.startswith("http://"):
+                icon_url = f"/api/tiles/icon-proxy?url={quote_plus(icon_url)}"
             return {"icon_url": icon_url}
 
     return {"icon_url": None}
@@ -826,6 +832,37 @@ def _probe_icon(base: str, parsed) -> str | None:
         pass
 
     return None
+
+
+@app.get(
+    "/api/tiles/icon-proxy",
+    tags=["tiles"],
+    summary="Proxy an icon URL through the backend (avoids mixed-content blocking)",
+)
+def icon_proxy(url: str):
+    """Fetch an icon from a remote URL and stream it back same-origin.
+
+    Used when auto-icon detects a favicon served over HTTP -- the browser
+    blocks HTTP images on an HTTPS dashboard. This endpoint fetches the
+    icon server-side and returns the bytes with the correct content-type.
+    """
+    if not url.startswith("http://") and not url.startswith("https://"):
+        raise HTTPException(status_code=400, detail="url must start with http(s)://")
+    try:
+        resp = httpx.get(url, timeout=10.0, follow_redirects=True, verify=False,
+                        headers={"User-Agent": "Dashboard-IconProxy/1.0"})
+        if resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"upstream returned {resp.status_code}")
+        content_type = resp.headers.get("content-type", "image/png")
+        # Only proxy image content types to prevent SSRF abuse.
+        if "image" not in content_type and "icon" not in content_type:
+            raise HTTPException(status_code=400, detail=f"not an image: {content_type}")
+        from fastapi import Response
+        return Response(content=resp.content, media_type=content_type)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)[:200])
 
 
 @app.get(
