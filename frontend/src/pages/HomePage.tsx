@@ -483,7 +483,7 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
                 </span>
                 <div className="ml-2 h-px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
               </header>
-              <TileGrid items={items} infoById={infoById} pingById={pingById} />
+              <TileGrid items={items} infoById={infoById} />
             </section>
           ))}
 
@@ -498,7 +498,7 @@ export function HomePage({ intervalMs = HEALTH_POLL_MS }: { intervalMs?: number 
                 </span>
                 <div className="ml-2 h-px flex-1 bg-gradient-to-r from-white/10 to-transparent" />
               </header>
-              <TileGrid items={unlinkedFiltered} infoById={infoById} pingById={pingById} />
+              <TileGrid items={unlinkedFiltered} infoById={infoById} />
             </section>
           )}
         </div>
@@ -800,11 +800,9 @@ function Filters({
 // ────────────────────────────────────────────────────────────────────────
 // Grid + tile cards.
 // ────────────────────────────────────────────────────────────────────────
-
 function TileGrid({
   items,
   infoById = {},
-  pingById = {},
 }: {
   items: {
     entry: ServiceEntry;
@@ -813,7 +811,6 @@ function TileGrid({
     effectiveStatus: ServiceStatus;
   }[];
   infoById?: Record<string, ServiceInfo>;
-  pingById?: Record<string, PingResult>;
 }) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
@@ -822,10 +819,8 @@ function TileGrid({
           key={t.entry.id}
           entry={t.entry}
           discovered={t.discovered}
-          health={t.health}
           status={t.effectiveStatus}
           info={infoById[t.entry.id]}
-          ping={pingById[t.entry.id]}
           // Unlinked discovered tiles (id starts with "disc-") are dimmed so
           // the user's own tiles visually stand out from auto-discovered ones.
           dimmed={t.entry.id.startsWith("disc-")}
@@ -838,23 +833,18 @@ function TileGrid({
 function TileCard({
   entry,
   discovered,
-  health,
   status,
   info,
-  ping,
   dimmed,
 }: {
   entry: ServiceEntry;
   discovered?: DiscoveredService;
-  health?: ServiceHealth;
   status: ServiceStatus;
   info?: ServiceInfo;
-  ping?: PingResult;
   dimmed?: boolean;
 }) {
   const icon = entry.icon?.trim() || iconForHint(discovered?.icon_hint);
   const iconUrl = entry.icon_url?.trim();
-  const [open, setOpen] = useState(false);
   const statusLabel = labelForStatus(status);
   const primaryPort = discovered?.ports?.[0];
   const link = entry.url?.trim() || (discovered && primaryPort ? makeBestGuessUrl(discovered) : "");
@@ -918,19 +908,7 @@ function TileCard({
         </div>
       </div>
       {info && <ServiceInfoBlock info={info} tileId={entry.id} />}
-      {ping && !ping.reachable && !discovered && (
-        <div className="mt-3 animate-fade-in rounded-lg border border-rose-400/20 bg-rose-400/5 p-2 text-[11px] text-rose-300">
-          <div className="flex items-center justify-between">
-            <span className="opacity-70">unreachable</span>
-            <span className="tabular-nums">{ping.response_ms}ms</span>
-          </div>
-          {ping.message && (
-            <div className="mt-0.5 truncate opacity-60" title={ping.message}>
-              {ping.message}
-            </div>
-          )}
-        </div>
-      )}
+
       {(entry.container_name || (discovered && entry.container_name)) && (
         <div className="mt-2 flex items-center gap-1 text-[10px] text-slate-500">
           <span className="opacity-60">docker:</span>
@@ -939,23 +917,7 @@ function TileCard({
           </code>
         </div>
       )}
-      {health && open && (
-        <div className="mt-3 animate-fade-in rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] text-slate-300">
-          <div className="flex items-center justify-between">
-            <span className="text-slate-500">uptime</span>
-            <span>{formatUptime(health.uptime_seconds)}</span>
-          </div>
-          <div className="mt-1 flex items-center justify-between">
-            <span className="text-slate-500">last seen</span>
-            <span>{health.last_seen ? new Date(health.last_seen).toLocaleString() : "—"}</span>
-          </div>
-          {health.message && (
-            <div className="mt-1 truncate text-slate-400" title={health.message}>
-              {health.message}
-            </div>
-          )}
-        </div>
-      )}
+
     </>
   );
 
@@ -965,8 +927,6 @@ function TileCard({
         "tile-card glass group relative overflow-hidden p-4 hover:border-cyan-400/40 hover:shadow-cyan-500/10",
         dimmed && "opacity-50 hover:opacity-100 transition-opacity"
       )}
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
     >
       {(iconUrl || icon) && (
         <div
@@ -1143,7 +1103,17 @@ function formatInfoValue(key: string, val: unknown): string {
     if (key.endsWith("_speed") || key === "download_speed" || key === "upload_speed") {
       return formatBytes(val) + "/s";
     }
-    if (key === "uptime") return formatUptime(val);
+    if (key === "uptime") {
+        const s = Number(val);
+        if (!s || s < 1) return "—";
+        const d = Math.floor(s / 86400);
+        const h = Math.floor(s / 3600) % 24;
+        const m = Math.floor(s / 60) % 60;
+        if (d) return `${d}d ${h}h`;
+        if (h) return `${h}h ${m}m`;
+        if (m) return `${m}m`;
+        return `${s}s`;
+      }
     if (key === "ads_percentage_today" || key === "percent_blocked") return val + "%";
     if (key === "queue_size_mb") return val.toFixed(1) + " MB";
     if (key === "temperature") return val + "°C";
@@ -1289,17 +1259,6 @@ function labelForStatus(s: ServiceStatus): string {
   }
 }
 
-function formatUptime(seconds: number): string {
-  if (!seconds || seconds < 1) return "—";
-  const s = seconds % 60;
-  const m = Math.floor(seconds / 60) % 60;
-  const h = Math.floor(seconds / 3600) % 24;
-  const d = Math.floor(seconds / 86400);
-  if (d) return `${d}d ${h}h`;
-  if (h) return `${h}h ${m}m`;
-  if (m) return `${m}m ${s}s`;
-  return `${s}s`;
-}
 
 const ICON_HINT_TO_EMOJI: Record<string, string> = {
   sonarr: "📺",
