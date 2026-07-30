@@ -968,6 +968,40 @@ function TileCard({
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
     >
+      {(iconUrl || icon) && (
+        <div
+          className="pointer-events-none absolute -right-1 -top-1 select-none"
+          style={{
+            width: "85%",
+            height: "100%",
+            right: "-1rem",
+            top: "-0.5rem",
+            opacity: 0.08,
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "flex-end",
+            // Gradient mask: visible from top-right, fading to transparent
+            // towards bottom-left — creates a shadow-like watermark effect.
+            WebkitMaskImage: "linear-gradient(225deg, black 10%, transparent 70%)",
+            maskImage: "linear-gradient(225deg, black 10%, transparent 70%)",
+          }}
+        >
+          {iconUrl ? (
+            <img
+              src={iconUrl}
+              alt=""
+              className="h-full w-full object-contain"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          ) : (
+            <span className="text-[8rem] leading-none" style={{ fontSize: "6rem" }}>
+              {icon}
+            </span>
+          )}
+        </div>
+      )}
       {link ? (
         <a
           href={link}

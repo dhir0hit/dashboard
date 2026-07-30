@@ -798,24 +798,32 @@ def auto_icon(body: dict):
 
 def _probe_icon(base: str, parsed) -> str | None:
     """Try /favicon.ico then HTML <link rel=icon> tags. Return URL or None."""
-    # 1. Try /favicon.ico directly (works for most sites)
+    # 1. Try /favicon.ico directly (works for most sites).
+    # Use GET (not HEAD) because some services return 401 on HEAD but
+    # serve the favicon fine on GET.
     favicon_url = f"{base}/favicon.ico"
     try:
-        resp = httpx.head(favicon_url, timeout=5.0, follow_redirects=True, verify=False)
-        if resp.status_code == 200 and "image" in resp.headers.get("content-type", ""):
+        resp = httpx.get(favicon_url, timeout=5.0, follow_redirects=True, verify=False,
+                        headers={"User-Agent": "Mozilla/5.0"})
+        ct = resp.headers.get("content-type", "")
+        if resp.status_code == 200 and ("image" in ct or "icon" in ct):
             return favicon_url
     except Exception:
         pass
 
-    # 2. Try fetching the HTML and parsing <link rel="icon"> tags
+    # 2. Try fetching the HTML and parsing <link rel="icon"> tags.
+    # Some services (Sonarr/Radarr) format <link> across multiple lines,
+    # so use [\s\S] (matches newlines) instead of [^>] to span the tag.
     try:
         resp = httpx.get(base, timeout=5.0, follow_redirects=True, verify=False,
                          headers={"User-Agent": "Mozilla/5.0"})
         import re as _re
+        # Match <link ... rel="icon" ... href="..." ...> across lines.
+        # rel must come before href (standard ordering).
         patterns = [
-            r"""<link[^>]+rel=["']icon["'][^>]+href=["']([^"']+)["']""",
-            r"""<link[^>]+rel=["']shortcut icon["'][^>]+href=["']([^"']+)["']""",
-            r"""<link[^>]+rel=["']apple-touch-icon["'][^>]+href=["']([^"']+)["']""",
+            r'<link\s[^>]*?rel=["\']icon["\'][\s\S]*?href=["\']([^"\']+)["\']',
+            r'<link\s[^>]*?rel=["\']shortcut icon["\'][\s\S]*?href=["\']([^"\']+)["\']',
+            r'<link\s[^>]*?rel=["\']apple-touch-icon["\'][\s\S]*?href=["\']([^"\']+)["\']',
         ]
         for pat in patterns:
             m = _re.search(pat, resp.text, _re.IGNORECASE)
@@ -827,7 +835,18 @@ def _probe_icon(base: str, parsed) -> str | None:
                     href = base + href
                 elif not href.startswith("http"):
                     href = base + "/" + href
-                return href
+                # GET-check the resolved URL to ensure it actually exists
+                # before returning it. Some apps reference stale webpack-
+                # hashed favicons in their HTML that 404 on fetch.
+                # Use GET (not HEAD) because some services (Sonarr/Radarr)
+                # return 401 on HEAD but 200 on GET for static assets.
+                try:
+                    check = httpx.get(href, timeout=5.0, follow_redirects=True, verify=False,
+                                      headers={"User-Agent": "Mozilla/5.0"})
+                    if check.status_code == 200 and ("image" in check.headers.get("content-type", "") or "icon" in check.headers.get("content-type", "")):
+                        return href
+                except Exception:
+                    pass
     except Exception:
         pass
 
