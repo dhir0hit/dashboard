@@ -826,6 +826,9 @@ function TileGrid({
           status={t.effectiveStatus}
           info={infoById[t.entry.id]}
           ping={pingById[t.entry.id]}
+          // Unlinked discovered tiles (id starts with "disc-") are dimmed so
+          // the user's own tiles visually stand out from auto-discovered ones.
+          dimmed={t.entry.id.startsWith("disc-")}
         />
       ))}
     </div>
@@ -839,6 +842,7 @@ function TileCard({
   status,
   info,
   ping,
+  dimmed,
 }: {
   entry: ServiceEntry;
   discovered?: DiscoveredService;
@@ -846,6 +850,7 @@ function TileCard({
   status: ServiceStatus;
   info?: ServiceInfo;
   ping?: PingResult;
+  dimmed?: boolean;
 }) {
   const icon = entry.icon?.trim() || iconForHint(discovered?.icon_hint);
   const iconUrl = entry.icon_url?.trim();
@@ -956,7 +961,10 @@ function TileCard({
 
   return (
     <div
-      className="tile-card glass group relative overflow-hidden p-4 hover:border-cyan-400/40 hover:shadow-cyan-500/10"
+      className={clsx(
+        "tile-card glass group relative overflow-hidden p-4 hover:border-cyan-400/40 hover:shadow-cyan-500/10",
+        dimmed && "opacity-50 hover:opacity-100 transition-opacity"
+      )}
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
     >

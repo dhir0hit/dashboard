@@ -136,6 +136,7 @@ function TilesSection({
   onSetCategoryOrder: (categoryOrder: string[]) => Promise<void>;
 }) {
   const [showAdd, setShowAdd] = useState(false);
+  const [scanningIcons, setScanningIcons] = useState(false);
 
   const sorted = useMemo(
     () => [...services].sort((a, b) => a.display_order - b.display_order),
@@ -218,13 +219,39 @@ function TilesSection({
     <section className="glass p-5">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-white">Dashboard tiles</h2>
-        <button
-          type="button"
-          onClick={() => setShowAdd((v) => !v)}
-          className="btn-primary"
-        >
-          <Plus className="h-4 w-4" /> Add tile
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              setScanningIcons(true);
+              try {
+                for (const s of sorted) {
+                  const url = s.url?.trim();
+                  if (!url) continue;
+                  const { icon_url } = await api.autoIcon(url, s.api_url?.trim());
+                  if (icon_url) {
+                    await onUpdate(s.id, { icon_url });
+                  }
+                }
+              } finally {
+                setScanningIcons(false);
+              }
+            }}
+            disabled={scanningIcons || sorted.length === 0}
+            className="btn-ghost px-3 py-1.5 text-sm"
+            title="Auto-detect favicons from each tile's URL"
+          >
+            {scanningIcons ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            Auto-scan icons
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowAdd((v) => !v)}
+            className="btn-primary"
+          >
+            <Plus className="h-4 w-4" /> Add tile
+          </button>
+        </div>
       </div>
 
       {showAdd && (
@@ -593,7 +620,7 @@ function ServiceForm({
               if (!form.url.trim()) return;
               setFetchingIcon(true);
               try {
-                const { icon_url } = await api.autoIcon(form.url.trim());
+                const { icon_url } = await api.autoIcon(form.url.trim(), form.api_url.trim());
                 if (icon_url) setForm({ ...form, icon_url });
               } finally {
                 setFetchingIcon(false);

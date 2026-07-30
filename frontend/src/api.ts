@@ -300,12 +300,16 @@ export const api = {
     return jsonOrThrow(res);
   },
 
-  async autoIcon(url: string): Promise<{ icon_url: string | null }> {
+  // Auto-detect favicon/logo for a service. Pass api_url as a fallback —
+  // the backend tries url first, then api_url (useful when the primary URL
+  // uses MagicDNS that the backend host can't resolve but the Tailscale
+  // IP in api_url is directly reachable).
+  async autoIcon(url: string, api_url?: string): Promise<{ icon_url: string | null }> {
     try {
       const res = await fetch(`${API_BASE}/api/tiles/auto-icon`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, api_url: api_url || undefined }),
       });
       return jsonOrThrow<{ icon_url: string | null }>(res);
     } catch {

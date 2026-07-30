@@ -763,27 +763,41 @@ def tiles_info_batch() -> dict:
     summary="Fetch the favicon/logo URL for a service by probing its URL",
 )
 def auto_icon(body: dict):
-    """Given a URL, try to find the site's favicon or logo.
+    """Given a URL (+ optional api_url), try to find the site's favicon or logo.
 
-    Probes `<url>/favicon.ico` first (most universal), then checks the HTML
-    for `<link rel="icon">` or `<link rel="apple-touch-icon">`.  Returns
-    `{"icon_url": "..."}` or `{"icon_url": null}` if nothing found.
+    Tries the primary ``url`` first, then falls back to ``api_url`` when
+    provided (often a directly-reachable Tailscale IP when the MagicDNS
+    name in ``url`` doesn't resolve from the backend host).
+
+    Returns ``{"icon_url": "..."}`` or ``{"icon_url": None}`` if nothing found.
     """
     url = (body.get("url") or "").strip()
-    if not url:
+    api_url = (body.get("api_url") or "").strip()
+    # Try each candidate URL in order; first one that yields a real icon wins.
+    candidates = [u for u in (url, api_url) if u]
+    if not candidates:
         raise HTTPException(status_code=400, detail="url is required")
-    # Normalize: add http:// if missing scheme
-    if not url.startswith("http://") and not url.startswith("https://"):
-        url = "http://" + url
-    parsed = urlparse(url)
-    base = f"{parsed.scheme}://{parsed.netloc}"
 
+    for candidate in candidates:
+        if not candidate.startswith("http://") and not candidate.startswith("https://"):
+            candidate = "http://" + candidate
+        parsed = urlparse(candidate)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        icon_url = _probe_icon(base, parsed)
+        if icon_url:
+            return {"icon_url": icon_url}
+
+    return {"icon_url": None}
+
+
+def _probe_icon(base: str, parsed) -> str | None:
+    """Try /favicon.ico then HTML <link rel=icon> tags. Return URL or None."""
     # 1. Try /favicon.ico directly (works for most sites)
     favicon_url = f"{base}/favicon.ico"
     try:
         resp = httpx.head(favicon_url, timeout=5.0, follow_redirects=True, verify=False)
         if resp.status_code == 200 and "image" in resp.headers.get("content-type", ""):
-            return {"icon_url": favicon_url}
+            return favicon_url
     except Exception:
         pass
 
@@ -791,7 +805,6 @@ def auto_icon(body: dict):
     try:
         resp = httpx.get(base, timeout=5.0, follow_redirects=True, verify=False,
                          headers={"User-Agent": "Mozilla/5.0"})
-        # Look for <link rel="icon" href="..."> or rel="shortcut icon"
         import re as _re
         patterns = [
             r"""<link[^>]+rel=["']icon["'][^>]+href=["']([^"']+)["']""",
@@ -802,19 +815,17 @@ def auto_icon(body: dict):
             m = _re.search(pat, resp.text, _re.IGNORECASE)
             if m:
                 href = m.group(1)
-                # Resolve relative URLs
                 if href.startswith("//"):
                     href = parsed.scheme + ":" + href
                 elif href.startswith("/"):
                     href = base + href
                 elif not href.startswith("http"):
                     href = base + "/" + href
-                return {"icon_url": href}
+                return href
     except Exception:
         pass
 
-    # 3. Try Google's favicon service as a fallback
-    return {"icon_url": f"https://icons.duckduckgo.com/ip3/{parsed.netloc}.ico"}
+    return None
 
 
 @app.get(
